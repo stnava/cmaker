@@ -10,3 +10,5 @@ Port of cmake to R
 
 * small changes to root CMakeLists.txt and Source/CMakeLists.txt
 
+* primarily - remove testing from cmake and also the testing source code
+
