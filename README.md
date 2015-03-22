@@ -8,4 +8,5 @@ Port of cmake to R
 
 * directory booty is a name change from cmake source
 
+* small changes to root CMakeLists.txt and Source/CMakeLists.txt
 
