@@ -14,6 +14,7 @@ cmake <- function() {
   if ( ! file.exists(CMAKElocation) )
     print("cmake does not exist")
   cat( CMAKElocation )
+  return(CMAKElocation)
 }
 
 #' return cmake version information
