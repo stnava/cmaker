@@ -1,15 +1,14 @@
 Package: cmaker
 Type: Package
 Title: cmake in R
-Version: 0.0
-Date: 2015-03-20
+Version: 0.1
+Date: 2017-09-30
 Author: The Insight Software Consortium, Kitware, Inc., Brian B. Avants
 Maintainer: Brian B. Avants <stnava@gmail.com>
 Description: Make the cmake cross-platform compilation system available from within R. Facilitate development of cross-platform C++ based R packages.
 License: BSD_3_clause + file LICENSE
 LazyLoad: yes
 NeedsCompilation: yes
-OS_type: unix
-SystemRequirements: clang (recommended)
+SystemRequirements: clang
 URL: http://github.com/stnava/cmaker/
 BugReports: http://github.com/stnava/cmaker/issues
