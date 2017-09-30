@@ -5,7 +5,7 @@ cp src/cmake/Utilities/NoDartCoverage src/cmake/Utilities/.NoDartCoverage
 cp src/cmake/Utilities/cmexpat/NoDartCoverage src/cmake/Utilities/cmexpat/.NoDartCoverage
 cp src/cmake/Utilities/cmzlib/NoDartCoverage src/cmake/Utilities/cmzlib/.NoDartCoverage
 cd ./src/cmake
-if [[ ! -s "${R_PACKAGE_DIR}/cmake/" ]] ; then
+if [ ! -s "${R_PACKAGE_DIR}/cmake/" ] ; then
   mkdir "${R_PACKAGE_DIR}/cmake/"
   ./bootstrap --parallel=$JTHREADS --prefix="${R_PACKAGE_DIR}/cmake/"
 fi
