@@ -7,3 +7,4 @@ src/cmake/Utilities/.NoDartCoverage
 src/cmake/Utilities/cmexpat/.NoDartCoverage
 src/cmake/Utilities/cmzlib/.NoDartCoverage
 ^appveyor\.yml$
+^\.travis\.yml$
