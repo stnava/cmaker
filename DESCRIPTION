@@ -13,3 +13,4 @@ SystemRequirements: clang
 URL: http://github.com/stnava/cmaker/
 BugReports: http://github.com/stnava/cmaker/issues
 RoxygenNote: 6.0.1.9000
+Encoding: UTF-8

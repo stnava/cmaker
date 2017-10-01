@@ -10,30 +10,26 @@
 #' @export cmake
 cmake <- function() {
   os_type = .Platform$OS.type
-    app = switch(
-      os_type,
-      unix = "",
-      windows = ".exe")
-
+  suff = switch(os_type,
+                unix = "",
+                windows = ".exe")
   CMAKElocation = system.file(
-    "cmake",
-    "bin", 
-    paste0("cmake", app),
-    package="cmaker")
-  if ( ! file.exists(CMAKElocation) ) {
-    stop("cmake does not exist")
+    "cmake", "bin", paste0("cmake", suff),
+    package = "cmaker")
+  if (!file.exists(CMAKElocation)) {
+    message("cmake does not exist")
   }
-  cat( CMAKElocation )
+  cat(CMAKElocation)
   return(CMAKElocation)
 }
 
-#' @export 
+
 #' @rdname cmake
-cmake_path=function() {
+#' @export
+cmake_path = function() {
   system.file(
-    "cmake",
-    "bin", 
-    package="cmaker")
+    "cmake", "bin",
+    package = "cmaker")
 }
 
 #' return cmake version information
