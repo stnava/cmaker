@@ -53,7 +53,7 @@ set(CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS "-dynamiclib -Wl,-headerpad_max_install_
 set(CMAKE_SHARED_MODULE_CREATE_C_FLAGS "-bundle -Wl,-headerpad_max_install_names")
 set(CMAKE_SHARED_MODULE_LOADER_C_FLAG "-Wl,-bundle_loader,")
 set(CMAKE_SHARED_MODULE_LOADER_CXX_FLAG "-Wl,-bundle_loader,")
-set(CMAKE_FIND_LIBRARY_SUFFIXES ".dylib" ".so" ".a")
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".tbd" ".dylib" ".so" ".a")
 
 # hack: if a new cmake (which uses CMAKE_INSTALL_NAME_TOOL) runs on an old build tree
 # (where install_name_tool was hardcoded) and where CMAKE_INSTALL_NAME_TOOL isn't in the cache
@@ -62,30 +62,6 @@ set(CMAKE_FIND_LIBRARY_SUFFIXES ".dylib" ".so" ".a")
 if(NOT DEFINED CMAKE_INSTALL_NAME_TOOL)
   find_program(CMAKE_INSTALL_NAME_TOOL install_name_tool)
   mark_as_advanced(CMAKE_INSTALL_NAME_TOOL)
-endif()
-
-# Make sure the combination of SDK and Deployment Target are allowed
-if(CMAKE_OSX_DEPLOYMENT_TARGET)
-  if("${_CMAKE_OSX_SYSROOT_PATH}" MATCHES "/MacOSX([0-9]+\\.[0-9]+)[^/]*\\.sdk")
-    set(_sdk_ver "${CMAKE_MATCH_1}")
-  elseif("${_CMAKE_OSX_SYSROOT_ORIG}" MATCHES "^macosx([0-9]+\\.[0-9]+)$")
-    set(_sdk_ver "${CMAKE_MATCH_1}")
-  elseif("${_CMAKE_OSX_SYSROOT_ORIG}" STREQUAL "/")
-    set(_sdk_ver "${_CURRENT_OSX_VERSION}")
-  else()
-    message(FATAL_ERROR
-      "CMAKE_OSX_DEPLOYMENT_TARGET is '${CMAKE_OSX_DEPLOYMENT_TARGET}' "
-      "but CMAKE_OSX_SYSROOT:\n \"${_CMAKE_OSX_SYSROOT_ORIG}\"\n"
-      "is not set to a MacOSX SDK with a recognized version.  "
-      "Either set CMAKE_OSX_SYSROOT to a valid SDK or set "
-      "CMAKE_OSX_DEPLOYMENT_TARGET to empty.")
-  endif()
-  if(CMAKE_OSX_DEPLOYMENT_TARGET VERSION_GREATER "${_sdk_ver}")
-    message(FATAL_ERROR
-      "CMAKE_OSX_DEPLOYMENT_TARGET (${CMAKE_OSX_DEPLOYMENT_TARGET}) "
-      "is greater than CMAKE_OSX_SYSROOT SDK:\n ${_CMAKE_OSX_SYSROOT_ORIG}\n"
-      "Please set CMAKE_OSX_DEPLOYMENT_TARGET to ${_sdk_ver} or lower.")
-  endif()
 endif()
 
 # Enable shared library versioning.
@@ -105,8 +81,6 @@ if("${_CURRENT_OSX_VERSION}" VERSION_LESS "10.5")
   set(CMAKE_LINK_DEPENDENT_LIBRARY_FILES 1)
 endif()
 
-set(CMAKE_C_CREATE_SHARED_LIBRARY_FORBIDDEN_FLAGS -w)
-set(CMAKE_CXX_CREATE_SHARED_LIBRARY_FORBIDDEN_FLAGS -w)
 set(CMAKE_C_CREATE_SHARED_LIBRARY
   "<CMAKE_C_COMPILER> <LANGUAGE_COMPILE_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS> <LINK_FLAGS> -o <TARGET> <SONAME_FLAG> <TARGET_INSTALLNAME_DIR><TARGET_SONAME> <OBJECTS> <LINK_LIBRARIES>")
 set(CMAKE_CXX_CREATE_SHARED_LIBRARY
@@ -167,12 +141,20 @@ if(_CMAKE_OSX_SYSROOT_PATH)
     ${_CMAKE_OSX_SYSROOT_PATH}/System/Library/Frameworks
     )
   # add platform developer framework path if exists
-  get_filename_component(_CMAKE_OSX_PLATFORM_FRAMEWORK_PATH
-    ${_CMAKE_OSX_SYSROOT_PATH}/../../Library/Frameworks ABSOLUTE)
-  if(IS_DIRECTORY ${_CMAKE_OSX_PLATFORM_FRAMEWORK_PATH})
-    list(APPEND CMAKE_SYSTEM_FRAMEWORK_PATH
-      ${_CMAKE_OSX_PLATFORM_FRAMEWORK_PATH})
-  endif()
+  foreach(_path
+    # Xcode 6
+    ${_CMAKE_OSX_SYSROOT_PATH}/../../Library/Frameworks
+    # Xcode 5 iOS
+    ${_CMAKE_OSX_SYSROOT_PATH}/Developer/Library/Frameworks
+    # Xcode 5 OSX
+    ${_CMAKE_OSX_SYSROOT_PATH}/../../../../../Library/Frameworks
+    )
+    get_filename_component(_abolute_path "${_path}" ABSOLUTE)
+    if(EXISTS "${_abolute_path}")
+      list(APPEND CMAKE_SYSTEM_FRAMEWORK_PATH "${_abolute_path}")
+      break()
+    endif()
+  endforeach()
 endif()
 list(APPEND CMAKE_SYSTEM_FRAMEWORK_PATH
   /Library/Frameworks

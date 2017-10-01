@@ -1,19 +1,16 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmLocalVisualStudio10Generator_h
 #define cmLocalVisualStudio10Generator_h
 
+#include "cmConfigure.h"
+
+#include <string>
+
 #include "cmLocalVisualStudio7Generator.h"
 
+class cmGlobalGenerator;
+class cmMakefile;
 
 /** \class cmLocalVisualStudio10Generator
  * \brief Write Visual Studio 10 project files.
@@ -25,10 +22,9 @@ class cmLocalVisualStudio10Generator : public cmLocalVisualStudio7Generator
 {
 public:
   ///! Set cache only and recurse to false by default.
-  cmLocalVisualStudio10Generator(VSVersion v);
+  cmLocalVisualStudio10Generator(cmGlobalGenerator* gg, cmMakefile* mf);
 
   virtual ~cmLocalVisualStudio10Generator();
-
 
   /**
    * Generate the makefile for this directory.

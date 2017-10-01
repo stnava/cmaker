@@ -1,21 +1,14 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef QCMakeWidgets_h
 #define QCMakeWidgets_h
 
-#include <QLineEdit>
+#include "cmConfigure.h"
+
 #include <QComboBox>
 #include <QCompleter>
+#include <QLineEdit>
+
 class QToolButton;
 
 // common widgets for Qt based CMake
@@ -30,6 +23,7 @@ protected slots:
   virtual void chooseFile() = 0;
 signals:
   void fileDialogExists(bool);
+
 protected:
   void resizeEvent(QResizeEvent* e);
   QToolButton* ToolButton;
@@ -41,7 +35,7 @@ class QCMakePathEditor : public QCMakeFileEditor
 {
   Q_OBJECT
 public:
-  QCMakePathEditor(QWidget* p = NULL, const QString& var = QString());
+  QCMakePathEditor(QWidget* p = CM_NULLPTR, const QString& var = QString());
   void chooseFile();
 };
 
@@ -50,7 +44,8 @@ class QCMakeFilePathEditor : public QCMakeFileEditor
 {
   Q_OBJECT
 public:
-  QCMakeFilePathEditor(QWidget* p = NULL, const QString& var = QString());
+  QCMakeFilePathEditor(QWidget* p = CM_NULLPTR,
+                       const QString& var = QString());
   void chooseFile();
 };
 
@@ -68,20 +63,20 @@ class QCMakeComboBox : public QComboBox
 {
   Q_OBJECT
   Q_PROPERTY(QString value READ currentText WRITE setValue USER true);
+
 public:
-  QCMakeComboBox(QWidget* p, QStringList strings) : QComboBox(p)
+  QCMakeComboBox(QWidget* p, QStringList strings)
+    : QComboBox(p)
   {
     this->addItems(strings);
   }
   void setValue(const QString& v)
   {
     int i = this->findText(v);
-    if(i != -1)
-    {
+    if (i != -1) {
       this->setCurrentIndex(i);
     }
   }
 };
 
 #endif
-

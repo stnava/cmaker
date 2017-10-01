@@ -1,18 +1,18 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2014 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmInstalledFile_h
 #define cmInstalledFile_h
 
+#include "cmConfigure.h" // IWYU pragma: keep
+
 #include "cmGeneratorExpression.h"
+#include "cm_auto_ptr.hxx"
+
+#include <map>
+#include <string>
+#include <vector>
+
+class cmMakefile;
 
 /** \class cmInstalledFile
  * \brief Represents a file intended for installation.
@@ -22,12 +22,10 @@
 class cmInstalledFile
 {
 public:
-
-  typedef cmsys::auto_ptr<cmCompiledGeneratorExpression>
+  typedef CM_AUTO_PTR<cmCompiledGeneratorExpression>
     CompiledGeneratorExpressionPtrType;
 
-  typedef std::vector<cmCompiledGeneratorExpression*>
-    ExpressionVectorType;
+  typedef std::vector<cmCompiledGeneratorExpression*> ExpressionVectorType;
 
   struct Property
   {
@@ -45,11 +43,11 @@ public:
 
   void RemoveProperty(const std::string& prop);
 
-  void SetProperty(cmMakefile const* mf,
-    const std::string& prop, const char *value);
+  void SetProperty(cmMakefile const* mf, const std::string& prop,
+                   const char* value);
 
-  void AppendProperty(cmMakefile const* mf,
-    const std::string& prop, const char* value,bool asString=false);
+  void AppendProperty(cmMakefile const* mf, const std::string& prop,
+                      const char* value, bool asString = false);
 
   bool HasProperty(const std::string& prop) const;
 
@@ -58,7 +56,7 @@ public:
   bool GetPropertyAsBool(const std::string& prop) const;
 
   void GetPropertyAsList(const std::string& prop,
-    std::vector<std::string>& list) const;
+                         std::vector<std::string>& list) const;
 
   void SetName(cmMakefile* mf, const std::string& name);
 

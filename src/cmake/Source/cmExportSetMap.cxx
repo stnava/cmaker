@@ -1,26 +1,19 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2012 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmExportSetMap.h"
-#include "cmExportSet.h"
-#include "cmAlgorithms.h"
 
-cmExportSet* cmExportSetMap::operator[](const std::string &name)
+#include "cmAlgorithms.h"
+#include "cmExportSet.h"
+
+#include <utility>
+
+cmExportSet* cmExportSetMap::operator[](const std::string& name)
 {
   std::map<std::string, cmExportSet*>::iterator it = this->find(name);
   if (it == this->end()) // Export set not found
-    {
+  {
     it = this->insert(std::make_pair(name, new cmExportSet(name))).first;
-    }
+  }
   return it->second;
 }
 

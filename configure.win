@@ -1,12 +1,25 @@
 #!/bin/bash
 CXX_STD=CXX11
-JTHREADS=2
-cp src/cmake/Utilities/NoDartCoverage src/cmake/Utilities/.NoDartCoverage
-cp src/cmake/Utilities/cmexpat/NoDartCoverage src/cmake/Utilities/cmexpat/.NoDartCoverage
-cp src/cmake/Utilities/cmzlib/NoDartCoverage src/cmake/Utilities/cmzlib/.NoDartCoverage
-cd ./src/cmake
-if [ ! -s "${R_PACKAGE_DIR}/cmake/" ] ; then
-  mkdir "${R_PACKAGE_DIR}/cmake/"
-  ./bootstrap --parallel=$JTHREADS --prefix="${R_PACKAGE_DIR}/cmake/"
+
+bit64=`${R_HOME}/bin/Rscript.exe -e "x=grepl('64', Sys.info()[['machine']])*1;cat(x)"`
+url="https://cmake.org/files/v3.9/"
+if [ $bit64 -eq 0 ]; 
+then
+	bit64_app=win32-x86 ;
+else 
+	bit64_app=win64-x64 ;
 fi
-cd ../
+cmake_file="cmake-3.9.3-${bit64_app}.zip"
+
+str="download.file('https://cmake.org/files/v3.9/"${cmake_file}
+str=${str}"', destfile='"${cmake_file}"')"
+Rscript -e "${str}"
+
+str="path=gsub('[.]zip$', '', '${cmake_file}'); "
+str=${str}"utils::unzip('"${cmake_file}
+str=${str}"', exdir = tempdir(),"
+str=${str}"files= file.path(path, 'bin', 'cmake.exe'));"
+str=${str}"file.copy(file.path(tempdir(), path, 'bin', "
+str=${str}"'cmake.exe'), to=file.path('inst', 'cmake', 'bin'));"
+
+

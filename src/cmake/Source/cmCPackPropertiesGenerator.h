@@ -1,37 +1,37 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2014 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmCPackPropertiesGenerator_h
 #define cmCPackPropertiesGenerator_h
 
+#include "cmConfigure.h"
+
 #include "cmScriptGenerator.h"
-#include "cmInstalledFile.h"
+
+#include <iosfwd>
+#include <string>
+#include <vector>
+
+class cmInstalledFile;
+class cmLocalGenerator;
 
 /** \class cmCPackPropertiesGenerator
  * \brief Support class for generating CPackProperties.cmake.
  *
  */
-class cmCPackPropertiesGenerator: public cmScriptGenerator
+class cmCPackPropertiesGenerator : public cmScriptGenerator
 {
+  CM_DISABLE_COPY(cmCPackPropertiesGenerator)
+
 public:
-  cmCPackPropertiesGenerator(
-     cmMakefile* mf,
-     cmInstalledFile const& installedFile,
-     std::vector<std::string> const& configurations);
+  cmCPackPropertiesGenerator(cmLocalGenerator* lg,
+                             cmInstalledFile const& installedFile,
+                             std::vector<std::string> const& configurations);
 
 protected:
-  virtual void GenerateScriptForConfig(std::ostream& os,
-    const std::string& config, Indent const& indent);
+  void GenerateScriptForConfig(std::ostream& os, const std::string& config,
+                               Indent indent) CM_OVERRIDE;
 
-  cmMakefile* Makefile;
+  cmLocalGenerator* LG;
   cmInstalledFile const& InstalledFile;
 };
 

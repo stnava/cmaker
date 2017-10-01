@@ -1,22 +1,11 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2014 Kitware, Inc.
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmWIXDirectoriesSourceWriter.h"
 
-cmWIXDirectoriesSourceWriter::cmWIXDirectoriesSourceWriter(cmCPackLog* logger,
-  std::string const& filename):
-    cmWIXSourceWriter(logger, filename)
+cmWIXDirectoriesSourceWriter::cmWIXDirectoriesSourceWriter(
+  cmCPackLog* logger, std::string const& filename, GuidType componentGuidType)
+  : cmWIXSourceWriter(logger, filename, componentGuidType)
 {
-
 }
 
 void cmWIXDirectoriesSourceWriter::EmitStartMenuFolder(
@@ -53,43 +42,41 @@ size_t cmWIXDirectoriesSourceWriter::BeginInstallationPrefixDirectory(
   std::string const& programFilesFolderId,
   std::string const& installRootString)
 {
-  BeginElement("Directory");
-  AddAttribute("Id", programFilesFolderId);
+  size_t offset = 1;
+  if (!programFilesFolderId.empty()) {
+    BeginElement("Directory");
+    AddAttribute("Id", programFilesFolderId);
+    offset = 0;
+  }
 
   std::vector<std::string> installRoot;
 
   cmSystemTools::SplitPath(installRootString.c_str(), installRoot);
 
-  if(!installRoot.empty() && installRoot.back().empty())
-    {
+  if (!installRoot.empty() && installRoot.back().empty()) {
     installRoot.pop_back();
-    }
+  }
 
-  for(size_t i = 1; i < installRoot.size(); ++i)
-    {
+  for (size_t i = 1; i < installRoot.size(); ++i) {
     BeginElement("Directory");
 
-    if(i == installRoot.size() - 1)
-      {
+    if (i == installRoot.size() - 1) {
       AddAttribute("Id", "INSTALL_ROOT");
-      }
-    else
-      {
-      std::stringstream tmp;
+    } else {
+      std::ostringstream tmp;
       tmp << "INSTALL_PREFIX_" << i;
       AddAttribute("Id", tmp.str());
-      }
+    }
 
     AddAttribute("Name", installRoot[i]);
   }
 
-  return installRoot.size();
+  return installRoot.size() - offset;
 }
 
 void cmWIXDirectoriesSourceWriter::EndInstallationPrefixDirectory(size_t size)
 {
-  for(size_t i = 0; i < size; ++i)
-    {
+  for (size_t i = 0; i < size; ++i) {
     EndElement("Directory");
-    }
+  }
 }

@@ -1,20 +1,17 @@
-/*============================================================================
-  Kitware Information Macro Library
-  Copyright 2010-2011 Kitware, Inc.
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/*
+  Copyright Kitware, Inc.
+  Distributed under the OSI-approved BSD 3-Clause License.
+  See accompanying file Copyright.txt for details.
+*/
 #include "test.h"
-#include KWIML_HEADER(INT.h)
-#include "test_INT_format.h"
-int test_INT_C(void)
+#include "../include/kwiml/int.h"
+#include "test_int_format.h"
+#ifndef KWIML_INT_VERSION
+# error "KWIML_INT_VERSION not defined!"
+#endif
+int test_int_C(void)
 {
-  if(!test_INT_format())
+  if(!test_int_format())
     {
     return 0;
     }

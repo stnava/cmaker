@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindRuby
 # --------
@@ -29,20 +32,6 @@
 #
 # ``RUBY_INCLUDE_PATH``
 #   same as RUBY_INCLUDE_DIRS, only provided for compatibility reasons, don't use it
-
-#=============================================================================
-# Copyright 2004-2009 Kitware, Inc.
-# Copyright 2008-2009 Alexander Neundorf <neundorf@kde.org>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 #   RUBY_ARCHDIR=`$RUBY -r rbconfig -e 'printf("%s",Config::CONFIG@<:@"archdir"@:>@)'`
 #   RUBY_SITEARCHDIR=`$RUBY -r rbconfig -e 'printf("%s",Config::CONFIG@<:@"sitearchdir"@:>@)'`
@@ -218,19 +207,19 @@ set(_RUBY_POSSIBLE_LIB_NAMES ruby ruby-static ruby${_RUBY_VERSION_SHORT} ruby${_
 
 if(WIN32)
    set( _RUBY_MSVC_RUNTIME "" )
-   if( MSVC60 )
+   if( MSVC_VERSION EQUAL 1200 )
      set( _RUBY_MSVC_RUNTIME "60" )
    endif()
-   if( MSVC70 )
+   if( MSVC_VERSION EQUAL 1300 )
      set( _RUBY_MSVC_RUNTIME "70" )
    endif()
-   if( MSVC71 )
+   if( MSVC_VERSION EQUAL 1310 )
      set( _RUBY_MSVC_RUNTIME "71" )
    endif()
-   if( MSVC80 )
+   if( MSVC_VERSION EQUAL 1400 )
      set( _RUBY_MSVC_RUNTIME "80" )
    endif()
-   if( MSVC90 )
+   if( MSVC_VERSION EQUAL 1500 )
      set( _RUBY_MSVC_RUNTIME "90" )
    endif()
 

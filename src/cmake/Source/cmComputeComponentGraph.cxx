@@ -1,23 +1,13 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmComputeComponentGraph.h"
 
 #include <algorithm>
 
 #include <assert.h>
 
-//----------------------------------------------------------------------------
-cmComputeComponentGraph::cmComputeComponentGraph(Graph const& input):
-  InputGraph(input)
+cmComputeComponentGraph::cmComputeComponentGraph(Graph const& input)
+  : InputGraph(input)
 {
   // Identify components.
   this->Tarjan();
@@ -28,16 +18,14 @@ cmComputeComponentGraph::cmComputeComponentGraph(Graph const& input):
   this->TransferEdges();
 }
 
-//----------------------------------------------------------------------------
 cmComputeComponentGraph::~cmComputeComponentGraph()
 {
 }
 
-//----------------------------------------------------------------------------
 void cmComputeComponentGraph::Tarjan()
 {
   int n = static_cast<int>(this->InputGraph.size());
-  TarjanEntry entry = {0,0};
+  TarjanEntry entry = { 0, 0 };
   this->TarjanEntries.resize(0);
   this->TarjanEntries.resize(n, entry);
   this->TarjanComponents.resize(0);
@@ -45,20 +33,17 @@ void cmComputeComponentGraph::Tarjan()
   this->TarjanWalkId = 0;
   this->TarjanVisited.resize(0);
   this->TarjanVisited.resize(n, 0);
-  for(int i = 0; i < n; ++i)
-    {
+  for (int i = 0; i < n; ++i) {
     // Start a new DFS from this node if it has never been visited.
-    if(!this->TarjanVisited[i])
-      {
+    if (!this->TarjanVisited[i]) {
       assert(this->TarjanStack.empty());
       ++this->TarjanWalkId;
       this->TarjanIndex = 0;
       this->TarjanVisit(i);
-      }
     }
+  }
 }
 
-//----------------------------------------------------------------------------
 void cmComputeComponentGraph::TarjanVisit(int i)
 {
   // We are now visiting this node.
@@ -72,41 +57,35 @@ void cmComputeComponentGraph::TarjanVisit(int i)
 
   // Follow outgoing edges.
   EdgeList const& nl = this->InputGraph[i];
-  for(EdgeList::const_iterator ni = nl.begin(); ni != nl.end(); ++ni)
-    {
+  for (EdgeList::const_iterator ni = nl.begin(); ni != nl.end(); ++ni) {
     int j = *ni;
 
     // Ignore edges to nodes that have been reached by a previous DFS
     // walk.  Since we did not reach the current node from that walk
     // it must not belong to the same component and it has already
     // been assigned to a component.
-    if(this->TarjanVisited[j] > 0 &&
-       this->TarjanVisited[j] < this->TarjanWalkId)
-      {
+    if (this->TarjanVisited[j] > 0 &&
+        this->TarjanVisited[j] < this->TarjanWalkId) {
       continue;
-      }
+    }
 
     // Visit the destination if it has not yet been visited.
-    if(!this->TarjanVisited[j])
-      {
+    if (!this->TarjanVisited[j]) {
       this->TarjanVisit(j);
-      }
+    }
 
     // If the destination has not yet been assigned to a component,
     // check if it has a better root for the current object.
-    if(this->TarjanComponents[j] < 0)
-      {
-      if(this->TarjanEntries[this->TarjanEntries[j].Root].VisitIndex <
-         this->TarjanEntries[this->TarjanEntries[i].Root].VisitIndex)
-        {
+    if (this->TarjanComponents[j] < 0) {
+      if (this->TarjanEntries[this->TarjanEntries[j].Root].VisitIndex <
+          this->TarjanEntries[this->TarjanEntries[i].Root].VisitIndex) {
         this->TarjanEntries[i].Root = this->TarjanEntries[j].Root;
-        }
       }
     }
+  }
 
   // Check if we have found a component.
-  if(this->TarjanEntries[i].Root == i)
-    {
+  if (this->TarjanEntries[i].Root == i) {
     // Yes.  Create it.
     int c = static_cast<int>(this->Components.size());
     this->Components.push_back(NodeList());
@@ -114,8 +93,7 @@ void cmComputeComponentGraph::TarjanVisit(int i)
 
     // Populate the component list.
     int j;
-    do
-      {
+    do {
       // Get the next member of the component.
       j = this->TarjanStack.top();
       this->TarjanStack.pop();
@@ -126,34 +104,30 @@ void cmComputeComponentGraph::TarjanVisit(int i)
 
       // Store the node in its component.
       component.push_back(j);
-      } while(j != i);
+    } while (j != i);
 
     // Sort the component members for clarity.
     std::sort(component.begin(), component.end());
-    }
+  }
 }
 
-//----------------------------------------------------------------------------
 void cmComputeComponentGraph::TransferEdges()
 {
   // Map inter-component edges in the original graph to edges in the
   // component graph.
   int n = static_cast<int>(this->InputGraph.size());
-  for(int i=0; i < n; ++i)
-    {
+  for (int i = 0; i < n; ++i) {
     int i_component = this->TarjanComponents[i];
     EdgeList const& nl = this->InputGraph[i];
-    for(EdgeList::const_iterator ni = nl.begin(); ni != nl.end(); ++ni)
-      {
+    for (EdgeList::const_iterator ni = nl.begin(); ni != nl.end(); ++ni) {
       int j = *ni;
       int j_component = this->TarjanComponents[j];
-      if(i_component != j_component)
-        {
+      if (i_component != j_component) {
         // We do not attempt to combine duplicate edges, but instead
         // store the inter-component edges with suitable multiplicity.
         this->ComponentGraph[i_component].push_back(
           cmGraphEdge(j_component, ni->IsStrong()));
-        }
       }
     }
+  }
 }

@@ -1,23 +1,14 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef QCMakeCacheView_h
 #define QCMakeCacheView_h
 
 #include "QCMake.h"
-#include <QTreeView>
+
+#include <QItemDelegate>
 #include <QSet>
 #include <QStandardItemModel>
-#include <QItemDelegate>
+#include <QTreeView>
 
 class QSortFilterProxyModel;
 class QCMakeCacheModel;
@@ -37,7 +28,7 @@ public:
   // get whether to show advanced entries
   bool showAdvanced() const;
 
-  QSize sizeHint() const { return QSize(200,200); }
+  QSize sizeHint() const { return QSize(200, 200); }
 
 public slots:
   // set whether to show advanced entries
@@ -64,14 +55,20 @@ public:
 
   // roles used to retrieve extra data such has help strings, types of
   // properties, and the advanced flag
-  enum { HelpRole = Qt::ToolTipRole,
-         TypeRole = Qt::UserRole,
-         AdvancedRole,
-         StringsRole,
-         GroupRole
-       };
+  enum
+  {
+    HelpRole = Qt::ToolTipRole,
+    TypeRole = Qt::UserRole,
+    AdvancedRole,
+    StringsRole,
+    GroupRole
+  };
 
-  enum ViewType { FlatView, GroupView };
+  enum ViewType
+  {
+    FlatView,
+    GroupView
+  };
 
 public slots:
   // set a list of properties.  This list will be sorted and grouped according
@@ -91,9 +88,9 @@ public slots:
 
   // insert a new property at a row specifying all the information about the
   // property
-  bool insertProperty(QCMakeProperty::PropertyType t,
-                      const QString& name, const QString& description,
-                      const QVariant& value, bool advanced);
+  bool insertProperty(QCMakeProperty::PropertyType t, const QString& name,
+                      const QString& description, const QVariant& value,
+                      bool advanced);
 
   // set the view type
   void setViewType(ViewType t);
@@ -110,12 +107,11 @@ public:
   int newPropertyCount() const;
 
   // return flags (overloaded to modify flag based on EditEnabled flag)
-  Qt::ItemFlags flags (const QModelIndex& index) const;
+  Qt::ItemFlags flags(const QModelIndex& index) const;
   QModelIndex buddy(const QModelIndex& idx) const;
 
   // get the data in the model for this property
-  void getPropertyData(const QModelIndex& idx1,
-                       QCMakeProperty& prop) const;
+  void getPropertyData(const QModelIndex& idx1, QCMakeProperty& prop) const;
 
 protected:
   bool EditEnabled;
@@ -124,17 +120,16 @@ protected:
   ViewType View;
 
   // set the data in the model for this property
-  void setPropertyData(const QModelIndex& idx1,
-                       const QCMakeProperty& p, bool isNew);
+  void setPropertyData(const QModelIndex& idx1, const QCMakeProperty& p,
+                       bool isNew);
 
   // breaks up he property list into groups
   // where each group has the same prefix up to the first underscore
   static void breakProperties(const QSet<QCMakeProperty>& props,
-                       QMap<QString, QCMakePropertyList>& result);
+                              QMap<QString, QCMakePropertyList>& result);
 
   // gets the prefix of a string up to the first _
   static QString prefix(const QString& s);
-
 };
 
 /// Qt delegate class for interaction (or other customization)
@@ -146,18 +141,22 @@ public:
   QCMakeCacheModelDelegate(QObject* p);
   /// create our own editors for cache properties
   QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option,
-      const QModelIndex& index ) const;
-  bool editorEvent (QEvent* event, QAbstractItemModel* model,
-       const QStyleOptionViewItem& option, const QModelIndex& index);
+                        const QModelIndex& index) const;
+  bool editorEvent(QEvent* event, QAbstractItemModel* model,
+                   const QStyleOptionViewItem& option,
+                   const QModelIndex& index);
   bool eventFilter(QObject* object, QEvent* event);
-  void setModelData(QWidget * editor, QAbstractItemModel * model, const QModelIndex & index ) const;
-  QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const;
+  void setModelData(QWidget* editor, QAbstractItemModel* model,
+                    const QModelIndex& index) const;
+  QSize sizeHint(const QStyleOptionViewItem& option,
+                 const QModelIndex& index) const;
 
   QSet<QCMakeProperty> changes() const;
   void clearChanges();
 
 protected slots:
   void setFileDialogFlag(bool);
+
 protected:
   bool FileDialogFlag;
   // record a change to an item in the model.
@@ -169,4 +168,3 @@ protected:
 };
 
 #endif
-

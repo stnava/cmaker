@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindPythonInterp
 # ----------------
@@ -28,30 +31,16 @@
 # for Python.  You need to set this variable before calling
 # find_package(PythonInterp).
 #
-# If also calling find_package(PythonLibs), call find_package(PythonInterp)
-# first to get the currently active Python version by default with a consistent
-# version of PYTHON_LIBRARIES.
-
-#=============================================================================
-# Copyright 2005-2010 Kitware, Inc.
-# Copyright 2011 Bjoern Ricks <bjoern.ricks@gmail.com>
-# Copyright 2012 Rolf Eike Beer <eike@sf-mail.de>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
+# If calling both ``find_package(PythonInterp)`` and
+# ``find_package(PythonLibs)``, call ``find_package(PythonInterp)`` first to
+# get the currently active Python version by default with a consistent version
+# of PYTHON_LIBRARIES.
 
 unset(_Python_NAMES)
 
 set(_PYTHON1_VERSIONS 1.6 1.5)
 set(_PYTHON2_VERSIONS 2.7 2.6 2.5 2.4 2.3 2.2 2.1 2.0)
-set(_PYTHON3_VERSIONS 3.4 3.3 3.2 3.1 3.0)
+set(_PYTHON3_VERSIONS 3.7 3.6 3.5 3.4 3.3 3.2 3.1 3.0)
 
 if(PythonInterp_FIND_VERSION)
     if(PythonInterp_FIND_VERSION_COUNT GREATER 1)
@@ -102,12 +91,15 @@ unset(_PYTHON3_VERSIONS)
 if(NOT PYTHON_EXECUTABLE)
     foreach(_CURRENT_VERSION IN LISTS _Python_VERSIONS)
       set(_Python_NAMES python${_CURRENT_VERSION})
-      if(WIN32)
+      if(CMAKE_HOST_WIN32)
         list(APPEND _Python_NAMES python)
       endif()
       find_program(PYTHON_EXECUTABLE
         NAMES ${_Python_NAMES}
-        PATHS [HKEY_LOCAL_MACHINE\\SOFTWARE\\Python\\PythonCore\\${_CURRENT_VERSION}\\InstallPath]
+        PATHS
+            [HKEY_LOCAL_MACHINE\\SOFTWARE\\Python\\PythonCore\\${_CURRENT_VERSION}\\InstallPath]
+            [HKEY_LOCAL_MACHINE\\SOFTWARE\\Python\\PythonCore\\${_CURRENT_VERSION}-32\\InstallPath]
+            [HKEY_LOCAL_MACHINE\\SOFTWARE\\Python\\PythonCore\\${_CURRENT_VERSION}-64\\InstallPath]
         )
     endforeach()
 endif()
@@ -156,8 +148,6 @@ if(PYTHON_EXECUTABLE)
     unset(_VERSION)
 endif()
 
-# handle the QUIETLY and REQUIRED arguments and set PYTHONINTERP_FOUND to TRUE if
-# all listed variables are TRUE
 include(${CMAKE_CURRENT_LIST_DIR}/FindPackageHandleStandardArgs.cmake)
 FIND_PACKAGE_HANDLE_STANDARD_ARGS(PythonInterp REQUIRED_VARS PYTHON_EXECUTABLE VERSION_VAR PYTHON_VERSION_STRING)
 

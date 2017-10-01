@@ -1,22 +1,9 @@
-#=============================================================================
-# CMake - Cross Platform Makefile Generator
-# Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
 #-----------------------------------------------------------------------------
 # set some special flags for different compilers
 #
-if(CMAKE_GENERATOR MATCHES "Visual Studio 7")
-  set(CMAKE_SKIP_COMPATIBILITY_TESTS 1)
-endif()
-
 if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "Intel")
   set(_INTEL_WINDOWS 1)
 endif()
@@ -64,7 +51,7 @@ endif()
 
 # Workaround for short jump tables on PA-RISC
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^parisc")
-  if(CMAKE_COMPILER_IS_GNUC)
+  if(CMAKE_COMPILER_IS_GNUCC)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mlong-calls")
   endif()
   if(CMAKE_COMPILER_IS_GNUCXX)
@@ -72,13 +59,28 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^parisc")
   endif()
 endif()
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL SunPro)
+if (CMAKE_CXX_COMPILER_ID STREQUAL SunPro AND
+    NOT DEFINED CMAKE_CXX${CMAKE_CXX_STANDARD}_STANDARD_COMPILE_OPTION)
   if (NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.13)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++03")
+    if (NOT CMAKE_CXX_STANDARD OR CMAKE_CXX_STANDARD EQUAL 98)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++03")
+    elseif(CMAKE_VERSION VERSION_LESS 3.8.20170502)
+      # CMake knows how to add this flag for compilation as C++11,
+      # but has not been taught that SunPro needs it for linking too.
+      # Add it in a place that will be used for both.
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    endif()
   else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -library=stlport4")
   endif()
 endif()
+
+foreach(lang C CXX)
+  # Suppress warnings from PGI compiler.
+  if (CMAKE_${lang}_COMPILER_ID STREQUAL "PGI")
+    set(CMAKE_${lang}_FLAGS "${CMAKE_${lang}_FLAGS} -w")
+  endif()
+endforeach()
 
 # use the ansi CXX compile flag for building cmake
 if (CMAKE_ANSI_CXXFLAGS)

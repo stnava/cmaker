@@ -1,68 +1,60 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2013 Stephen Kelly <steveire@gmail.com>
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmTargetCompileDefinitionsCommand.h"
 
-#include "cmAlgorithms.h"
+#include <sstream>
 
-bool cmTargetCompileDefinitionsCommand
-::InitialPass(std::vector<std::string> const& args, cmExecutionStatus &)
+#include "cmAlgorithms.h"
+#include "cmMakefile.h"
+#include "cmTarget.h"
+#include "cmake.h"
+
+class cmExecutionStatus;
+
+bool cmTargetCompileDefinitionsCommand::InitialPass(
+  std::vector<std::string> const& args, cmExecutionStatus&)
 {
   return this->HandleArguments(args, "COMPILE_DEFINITIONS");
 }
 
-void cmTargetCompileDefinitionsCommand
-::HandleImportedTarget(const std::string &tgt)
+void cmTargetCompileDefinitionsCommand::HandleImportedTarget(
+  const std::string& tgt)
 {
   std::ostringstream e;
-  e << "Cannot specify compile definitions for imported target \""
-    << tgt << "\".";
+  e << "Cannot specify compile definitions for imported target \"" << tgt
+    << "\".";
   this->Makefile->IssueMessage(cmake::FATAL_ERROR, e.str());
 }
 
-void cmTargetCompileDefinitionsCommand
-::HandleMissingTarget(const std::string &name)
+void cmTargetCompileDefinitionsCommand::HandleMissingTarget(
+  const std::string& name)
 {
   std::ostringstream e;
-  e << "Cannot specify compile definitions for target \"" << name << "\" "
+  e << "Cannot specify compile definitions for target \"" << name
+    << "\" "
        "which is not built by this project.";
   this->Makefile->IssueMessage(cmake::FATAL_ERROR, e.str());
 }
 
-//----------------------------------------------------------------------------
-std::string cmTargetCompileDefinitionsCommand
-::Join(const std::vector<std::string> &content)
+std::string cmTargetCompileDefinitionsCommand::Join(
+  const std::vector<std::string>& content)
 {
   std::string defs;
   std::string sep;
-  for(std::vector<std::string>::const_iterator it = content.begin();
-    it != content.end(); ++it)
-    {
-    if (cmHasLiteralPrefix(it->c_str(), "-D"))
-      {
+  for (std::vector<std::string>::const_iterator it = content.begin();
+       it != content.end(); ++it) {
+    if (cmHasLiteralPrefix(it->c_str(), "-D")) {
       defs += sep + it->substr(2);
-      }
-    else
-      {
+    } else {
       defs += sep + *it;
-      }
-    sep = ";";
     }
+    sep = ";";
+  }
   return defs;
 }
 
-//----------------------------------------------------------------------------
-bool cmTargetCompileDefinitionsCommand
-::HandleDirectContent(cmTarget *tgt, const std::vector<std::string> &content,
-                                   bool, bool)
+bool cmTargetCompileDefinitionsCommand::HandleDirectContent(
+  cmTarget* tgt, const std::vector<std::string>& content, bool, bool)
 {
   tgt->AppendProperty("COMPILE_DEFINITIONS", this->Join(content).c_str());
   return true;

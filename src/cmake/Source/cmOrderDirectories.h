@@ -1,25 +1,20 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmOrderDirectories_h
 #define cmOrderDirectories_h
 
-#include "cmStandardIncludes.h"
+#include "cmConfigure.h"
 
-#include <cmsys/RegularExpression.hxx>
+#include "cmsys/RegularExpression.hxx"
+#include <map>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
+class cmGeneratorTarget;
 class cmGlobalGenerator;
 class cmOrderDirectoriesConstraint;
-class cmOrderDirectoriesConstraintLibrary;
-class cmTarget;
 
 /** \class cmOrderDirectories
  * \brief Compute a safe runtime path order for a set of shared libraries.
@@ -27,10 +22,11 @@ class cmTarget;
 class cmOrderDirectories
 {
 public:
-  cmOrderDirectories(cmGlobalGenerator* gg, cmTarget const* target,
+  cmOrderDirectories(cmGlobalGenerator* gg, cmGeneratorTarget const* target,
                      const char* purpose);
   ~cmOrderDirectories();
-  void AddRuntimeLibrary(std::string const& fullPath, const char* soname = 0);
+  void AddRuntimeLibrary(std::string const& fullPath,
+                         const char* soname = CM_NULLPTR);
   void AddLinkLibrary(std::string const& fullPath);
   void AddUserDirectories(std::vector<std::string> const& extra);
   void AddLanguageDirectories(std::vector<std::string> const& dirs);
@@ -39,12 +35,11 @@ public:
                             std::string const& removeExtRegex);
 
   std::vector<std::string> const& GetOrderedDirectories();
+
 private:
   cmGlobalGenerator* GlobalGenerator;
-  cmTarget const* Target;
+  cmGeneratorTarget const* Target;
   std::string Purpose;
-
-  bool Computed;
 
   std::vector<std::string> OrderedDirectories;
 
@@ -68,8 +63,9 @@ private:
   void OrderDirectories();
   void VisitDirectory(unsigned int i);
   void DiagnoseCycle();
-  bool CycleDiagnosed;
   int WalkId;
+  bool CycleDiagnosed;
+  bool Computed;
 
   // Adjacency-list representation of runtime path ordering graph.
   // This maps from directory to those that must come *before* it.
@@ -78,8 +74,18 @@ private:
   // element is the index of the runtime library that added the
   // constraint.
   typedef std::pair<int, int> ConflictPair;
-  struct ConflictList: public std::vector<ConflictPair> {};
+  struct ConflictList : public std::vector<ConflictPair>
+  {
+  };
   std::vector<ConflictList> ConflictGraph;
+
+  // Compare directories after resolving symlinks.
+  bool IsSameDirectory(std::string const& l, std::string const& r);
+
+  bool IsImplicitDirectory(std::string const& dir);
+
+  std::string const& GetRealPath(std::string const& dir);
+  std::map<std::string, std::string> RealPaths;
 
   friend class cmOrderDirectoriesConstraint;
   friend class cmOrderDirectoriesConstraintLibrary;

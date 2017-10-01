@@ -52,6 +52,7 @@ SVNUpdateOptions: @SVN_UPDATE_OPTIONS@
 
 # Git options
 GITCommand: @GITCOMMAND@
+GITInitSubmodules: @CTEST_GIT_INIT_SUBMODULES@
 GITUpdateOptions: @GIT_UPDATE_OPTIONS@
 GITUpdateCustom: @CTEST_GIT_UPDATE_CUSTOM@
 
@@ -69,6 +70,7 @@ UpdateType: @UPDATE_TYPE@
 
 # Compiler info
 Compiler: @CMAKE_CXX_COMPILER@
+CompilerVersion: @CMAKE_CXX_COMPILER_VERSION@
 
 # Dynamic analysis (MemCheck)
 PurifyCommand: @PURIFYCOMMAND@
@@ -94,6 +96,10 @@ SlurmRunCommand: @SLURM_SRUN_COMMAND@
 # process will be summarily terminated.
 # Currently set to 25 minutes
 TimeOut: @DART_TESTING_TIMEOUT@
+
+# During parallel testing CTest will not start a new test if doing
+# so would cause the system load to exceed this value.
+TestLoad: @CTEST_TEST_LOAD@
 
 UseLaunchers: @CTEST_USE_LAUNCHERS@
 CurlOptions: @CTEST_CURL_OPTIONS@

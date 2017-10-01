@@ -1,26 +1,24 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc.
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmCTestVC_h
 #define cmCTestVC_h
 
+#include "cmConfigure.h"
+
+#include <iosfwd>
+#include <string>
+
+#include "cmProcessOutput.h"
 #include "cmProcessTools.h"
 
 class cmCTest;
+class cmXMLWriter;
 
 /** \class cmCTestVC
  * \brief Base class for version control system handlers
  *
  */
-class cmCTestVC: public cmProcessTools
+class cmCTestVC : public cmProcessTools
 {
 public:
   /** Construct with a CTest instance and update log stream.  */
@@ -48,13 +46,20 @@ public:
 
   /** Get the command line used by the Update method.  */
   std::string const& GetUpdateCommandLine() const
-    { return this->UpdateCommandLine; }
+  {
+    return this->UpdateCommandLine;
+  }
 
   /** Write Update.xml entries for the updates found.  */
-  bool WriteXML(std::ostream& xml);
+  bool WriteXML(cmXMLWriter& xml);
 
   /** Enumerate non-trivial working tree states during update.  */
-  enum PathStatus { PathUpdated, PathModified, PathConflicting };
+  enum PathStatus
+  {
+    PathUpdated,
+    PathModified,
+    PathConflicting
+  };
 
   /** Get the number of working tree paths in each state after update.  */
   int GetPathCount(PathStatus s) const { return this->PathCount[s]; }
@@ -62,13 +67,14 @@ public:
 protected:
   // Internal API to be implemented by subclasses.
   virtual void CleanupImpl();
-  virtual void NoteOldRevision();
+  virtual bool NoteOldRevision();
   virtual bool UpdateImpl();
-  virtual void NoteNewRevision();
-  virtual bool WriteXMLUpdates(std::ostream& xml);
+  virtual bool NoteNewRevision();
+  virtual bool WriteXMLUpdates(cmXMLWriter& xml);
 
 #if defined(__SUNPRO_CC) && __SUNPRO_CC <= 0x510
-public: // Sun CC 5.1 needs help to allow cmCTestSVN::Revision to see this
+  // Sun CC 5.1 needs help to allow cmCTestSVN::Revision to see this
+public:
 #endif
   /** Basic information about one revision of a tree or file.  */
   struct Revision
@@ -84,7 +90,6 @@ public: // Sun CC 5.1 needs help to allow cmCTestSVN::Revision to see this
   };
 
 protected:
-  struct File;
   friend struct File;
 
   /** Represent change to one file.  */
@@ -93,24 +98,35 @@ protected:
     PathStatus Status;
     Revision const* Rev;
     Revision const* PriorRev;
-    File(): Status(PathUpdated), Rev(0), PriorRev(0) {}
-    File(PathStatus status, Revision const* rev, Revision const* priorRev):
-      Status(status), Rev(rev), PriorRev(priorRev) {}
+    File()
+      : Status(PathUpdated)
+      , Rev(CM_NULLPTR)
+      , PriorRev(CM_NULLPTR)
+    {
+    }
+    File(PathStatus status, Revision const* rev, Revision const* priorRev)
+      : Status(status)
+      , Rev(rev)
+      , PriorRev(priorRev)
+    {
+    }
   };
 
   /** Convert a list of arguments to a human-readable command line.  */
   static std::string ComputeCommandLine(char const* const* cmd);
 
   /** Run a command line and send output to given parsers.  */
-  bool RunChild(char const* const* cmd, OutputParser* out,
-                OutputParser* err, const char* workDir = 0);
+  bool RunChild(char const* const* cmd, OutputParser* out, OutputParser* err,
+                const char* workDir = CM_NULLPTR,
+                Encoding encoding = cmProcessOutput::Auto);
 
   /** Run VC update command line and send output to given parsers.  */
-  bool RunUpdateCommand(char const* const* cmd,
-                        OutputParser* out, OutputParser* err = 0);
+  bool RunUpdateCommand(char const* const* cmd, OutputParser* out,
+                        OutputParser* err = CM_NULLPTR,
+                        Encoding encoding = cmProcessOutput::Auto);
 
   /** Write xml element for one file.  */
-  void WriteXMLEntry(std::ostream& xml, std::string const& path,
+  void WriteXMLEntry(cmXMLWriter& xml, std::string const& path,
                      std::string const& name, std::string const& full,
                      File const& f);
 

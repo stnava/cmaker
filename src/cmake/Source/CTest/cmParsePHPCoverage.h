@@ -1,20 +1,15 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc.
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmParsePHPCoverage_h
 #define cmParsePHPCoverage_h
 
-#include "cmStandardIncludes.h"
-#include "cmCTestCoverageHandler.h"
+#include "cmConfigure.h" // IWYU pragma: keep
+
+#include <iosfwd>
+#include <string>
+
+class cmCTest;
+class cmCTestCoverageHandlerContainer;
 
 /** \class cmParsePHPCoverage
  * \brief Parse xdebug PHP coverage information
@@ -26,10 +21,10 @@
 class cmParsePHPCoverage
 {
 public:
-  cmParsePHPCoverage(cmCTestCoverageHandlerContainer& cont,
-    cmCTest* ctest);
+  cmParsePHPCoverage(cmCTestCoverageHandlerContainer& cont, cmCTest* ctest);
   bool ReadPHPCoverageDirectory(const char* dir);
   void PrintCoverage();
+
 private:
   bool ReadPHPData(const char* file);
   bool ReadArraySize(std::istream& in, int& size);
@@ -40,6 +35,5 @@ private:
   cmCTestCoverageHandlerContainer& Coverage;
   cmCTest* CTest;
 };
-
 
 #endif

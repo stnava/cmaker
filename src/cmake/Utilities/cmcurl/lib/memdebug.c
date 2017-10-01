@@ -5,11 +5,11 @@
  *                            | (__| |_| |  _ <| |___
  *                             \___|\___/|_| \_\_____|
  *
- * Copyright (C) 1998 - 2013, Daniel Stenberg, <daniel@haxx.se>, et al.
+ * Copyright (C) 1998 - 2017, Daniel Stenberg, <daniel@haxx.se>, et al.
  *
  * This software is licensed as described in the file COPYING, which
  * you should have received as part of this distribution. The terms
- * are also available at http://curl.haxx.se/docs/copyright.html.
+ * are also available at https://curl.haxx.se/docs/copyright.html.
  *
  * You may opt to use, copy, modify, merge, publish, distribute and/or sell
  * copies of the Software, and permit persons to whom the Software is
@@ -26,17 +26,14 @@
 
 #include <curl/curl.h>
 
-#define _MPRINTF_REPLACE
-#include <curl/mprintf.h>
 #include "urldata.h"
 
 #define MEMDEBUG_NODEFINES /* don't redefine the standard functions */
+
+/* The last 3 #include files should be in this order */
+#include "curl_printf.h"
 #include "curl_memory.h"
 #include "memdebug.h"
-
-#ifndef HAVE_ASSERT_H
-#  define assert(x) Curl_nop_stmt
-#endif
 
 /*
  * Until 2011-08-17 libcurl's Memory Tracking feature also performed
@@ -89,7 +86,7 @@ struct memdebug {
   union {
     curl_off_t o;
     double d;
-    void * p;
+    void *p;
   } mem[1];
   /* I'm hoping this is the thing with the strictest alignment
    * requirements.  That also means we waste some space :-( */
@@ -113,12 +110,12 @@ void curl_memdebug(const char *logname)
 {
   if(!logfile) {
     if(logname && *logname)
-      logfile = fopen(logname, "w");
+      logfile = fopen(logname, FOPEN_WRITETEXT);
     else
       logfile = stderr;
 #ifdef MEMDEBUG_LOG_SYNC
     /* Flush the log file after every line so the log isn't lost in a crash */
-    setvbuf(logfile, (char *)NULL, _IOLBF, 0);
+    setbuf(logfile, (char *)NULL);
 #endif
   }
 }
@@ -147,6 +144,7 @@ static bool countcheck(const char *func, int line, const char *source)
         /* log to stderr also */
         fprintf(stderr, "LIMIT %s:%d %s reached memlimit\n",
                 source, line, func);
+        fflush(logfile); /* because it might crash now */
       }
       SET_ERRNO(ENOMEM);
       return TRUE; /* RETURN ERROR! */
@@ -154,10 +152,6 @@ static bool countcheck(const char *func, int line, const char *source)
     else
       memsize--; /* countdown */
 
-    /* log the countdown */
-    if(source)
-      curl_memlog("LIMIT %s:%d %ld ALLOCS left\n",
-                  source, line, memsize);
 
   }
 
@@ -169,7 +163,7 @@ void *curl_domalloc(size_t wantedsize, int line, const char *source)
   struct memdebug *mem;
   size_t size;
 
-  assert(wantedsize != 0);
+  DEBUGASSERT(wantedsize != 0);
 
   if(countcheck("malloc", line, source))
     return NULL;
@@ -198,8 +192,8 @@ void *curl_docalloc(size_t wanted_elements, size_t wanted_size,
   struct memdebug *mem;
   size_t size, user_size;
 
-  assert(wanted_elements != 0);
-  assert(wanted_size != 0);
+  DEBUGASSERT(wanted_elements != 0);
+  DEBUGASSERT(wanted_size != 0);
 
   if(countcheck("calloc", line, source))
     return NULL;
@@ -225,7 +219,7 @@ char *curl_dostrdup(const char *str, int line, const char *source)
   char *mem;
   size_t len;
 
-  assert(str != NULL);
+  DEBUGASSERT(str != NULL);
 
   if(countcheck("strdup", line, source))
     return NULL;
@@ -238,7 +232,7 @@ char *curl_dostrdup(const char *str, int line, const char *source)
 
   if(source)
     curl_memlog("MEM %s:%d strdup(%p) (%zu) = %p\n",
-                source, line, (void *)str, len, (void *)mem);
+                source, line, (const void *)str, len, (const void *)mem);
 
   return mem;
 }
@@ -249,7 +243,7 @@ wchar_t *curl_dowcsdup(const wchar_t *str, int line, const char *source)
   wchar_t *mem;
   size_t wsiz, bsiz;
 
-  assert(str != NULL);
+  DEBUGASSERT(str != NULL);
 
   if(countcheck("wcsdup", line, source))
     return NULL;
@@ -278,7 +272,7 @@ void *curl_dorealloc(void *ptr, size_t wantedsize,
 
   size_t size = sizeof(struct memdebug)+wantedsize;
 
-  assert(wantedsize != 0);
+  DEBUGASSERT(wantedsize != 0);
 
   if(countcheck("realloc", line, source))
     return NULL;
@@ -343,10 +337,10 @@ curl_socket_t curl_socket(int domain, int type, int protocol,
                           int line, const char *source)
 {
   const char *fmt = (sizeof(curl_socket_t) == sizeof(int)) ?
-                    "FD %s:%d socket() = %d\n" :
-                    (sizeof(curl_socket_t) == sizeof(long)) ?
-                    "FD %s:%d socket() = %ld\n" :
-                    "FD %s:%d socket() = %zd\n" ;
+    "FD %s:%d socket() = %d\n" :
+    (sizeof(curl_socket_t) == sizeof(long)) ?
+    "FD %s:%d socket() = %ld\n" :
+    "FD %s:%d socket() = %zd\n";
 
   curl_socket_t sockfd = socket(domain, type, protocol);
 
@@ -362,10 +356,10 @@ int curl_socketpair(int domain, int type, int protocol,
                     int line, const char *source)
 {
   const char *fmt = (sizeof(curl_socket_t) == sizeof(int)) ?
-                    "FD %s:%d socketpair() = %d %d\n" :
-                    (sizeof(curl_socket_t) == sizeof(long)) ?
-                    "FD %s:%d socketpair() = %ld %ld\n" :
-                    "FD %s:%d socketpair() = %zd %zd\n" ;
+    "FD %s:%d socketpair() = %d %d\n" :
+    (sizeof(curl_socket_t) == sizeof(long)) ?
+    "FD %s:%d socketpair() = %ld %ld\n" :
+    "FD %s:%d socketpair() = %zd %zd\n";
 
   int res = socketpair(domain, type, protocol, socket_vector);
 
@@ -380,10 +374,10 @@ curl_socket_t curl_accept(curl_socket_t s, void *saddr, void *saddrlen,
                           int line, const char *source)
 {
   const char *fmt = (sizeof(curl_socket_t) == sizeof(int)) ?
-                    "FD %s:%d accept() = %d\n" :
-                    (sizeof(curl_socket_t) == sizeof(long)) ?
-                    "FD %s:%d accept() = %ld\n" :
-                    "FD %s:%d accept() = %zd\n" ;
+    "FD %s:%d accept() = %d\n" :
+    (sizeof(curl_socket_t) == sizeof(long)) ?
+    "FD %s:%d accept() = %ld\n" :
+    "FD %s:%d accept() = %zd\n";
 
   struct sockaddr *addr = (struct sockaddr *)saddr;
   curl_socklen_t *addrlen = (curl_socklen_t *)saddrlen;
@@ -400,10 +394,10 @@ curl_socket_t curl_accept(curl_socket_t s, void *saddr, void *saddrlen,
 void curl_mark_sclose(curl_socket_t sockfd, int line, const char *source)
 {
   const char *fmt = (sizeof(curl_socket_t) == sizeof(int)) ?
-                    "FD %s:%d sclose(%d)\n" :
-                    (sizeof(curl_socket_t) == sizeof(long)) ?
-                    "FD %s:%d sclose(%ld)\n" :
-                    "FD %s:%d sclose(%zd)\n" ;
+    "FD %s:%d sclose(%d)\n":
+    (sizeof(curl_socket_t) == sizeof(long)) ?
+    "FD %s:%d sclose(%ld)\n":
+    "FD %s:%d sclose(%zd)\n";
 
   if(source)
     curl_memlog(fmt, source, line, sockfd);
@@ -447,7 +441,7 @@ int curl_fclose(FILE *file, int line, const char *source)
 {
   int res;
 
-  assert(file != NULL);
+  DEBUGASSERT(file != NULL);
 
   res=fclose(file);
 
@@ -460,7 +454,7 @@ int curl_fclose(FILE *file, int line, const char *source)
 
 #define LOGLINE_BUFSIZE  1024
 
-/* this does the writting to the memory tracking log file */
+/* this does the writing to the memory tracking log file */
 void curl_memlog(const char *format, ...)
 {
   char *buf;
@@ -482,7 +476,7 @@ void curl_memlog(const char *format, ...)
     nchars = LOGLINE_BUFSIZE - 1;
 
   if(nchars > 0)
-    fwrite(buf, 1, nchars, logfile);
+    fwrite(buf, 1, (size_t)nchars, logfile);
 
   (Curl_cfree)(buf);
 }

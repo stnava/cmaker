@@ -1,32 +1,25 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2011 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmNewLineStyle_h
 #define cmNewLineStyle_h
 
-#include "cmStandardIncludes.h"
+#include "cmConfigure.h" // IWYU pragma: keep
+
+#include <string>
+#include <vector>
 
 class cmNewLineStyle
 {
 public:
-
   cmNewLineStyle();
 
   enum Style
   {
     Invalid,
-               // LF = '\n', 0x0A, 10
-               // CR = '\r', 0x0D, 13
-    LF,        // Unix
-    CRLF       // Dos
+    // LF = '\n', 0x0A, 10
+    // CR = '\r', 0x0D, 13
+    LF,  // Unix
+    CRLF // Dos
   };
 
   void SetStyle(Style);
@@ -35,7 +28,7 @@ public:
   bool IsValid() const;
 
   bool ReadFromArguments(const std::vector<std::string>& args,
-                         std::string &errorString);
+                         std::string& errorString);
 
   const std::string GetCharacters() const;
 

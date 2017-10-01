@@ -1,19 +1,9 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmGlobalVisualStudio8Generator_h
 #define cmGlobalVisualStudio8Generator_h
 
 #include "cmGlobalVisualStudio71Generator.h"
-
 
 /** \class cmGlobalVisualStudio8Generator
  * \brief Write a Unix makefiles.
@@ -23,21 +13,18 @@
 class cmGlobalVisualStudio8Generator : public cmGlobalVisualStudio71Generator
 {
 public:
-  cmGlobalVisualStudio8Generator(const std::string& name,
-    const std::string& platformName);
+  cmGlobalVisualStudio8Generator(cmake* cm, const std::string& name,
+                                 const std::string& platformName);
   static cmGlobalGeneratorFactory* NewFactory();
 
   ///! Get the name for the generator.
-  virtual std::string GetName() const {return this->Name;}
+  virtual std::string GetName() const { return this->Name; }
 
-  /** Get the documentation entry for this generator.  */
-  static void GetDocumentation(cmDocumentationEntry& entry);
+  /** Get the name of the main stamp list file. */
+  static std::string GetGenerateStampList();
 
-  ///! Create a local generator appropriate to this Global Generator
-  virtual cmLocalGenerator *CreateLocalGenerator();
-
-  virtual void EnableLanguage(std::vector<std::string>const& languages,
-                              cmMakefile *, bool optional);
+  virtual void EnableLanguage(std::vector<std::string> const& languages,
+                              cmMakefile*, bool optional);
   virtual void AddPlatformDefinitions(cmMakefile* mf);
 
   virtual bool SetGeneratorPlatform(std::string const& p, cmMakefile* mf);
@@ -63,14 +50,19 @@ public:
 
   /** Return true if the target project file should have the option
       LinkLibraryDependencies and link to .sln dependencies. */
-  virtual bool NeedLinkLibraryDependencies(cmTarget& target);
+  virtual bool NeedLinkLibraryDependencies(cmGeneratorTarget* target);
 
   /** Return true if building for Windows CE */
-  virtual bool TargetsWindowsCE() const {
-    return !this->WindowsCEVersion.empty(); }
+  virtual bool TargetsWindowsCE() const
+  {
+    return !this->WindowsCEVersion.empty();
+  }
+
+  /** Is the installed VS an Express edition?  */
+  bool IsExpressEdition() const { return this->ExpressEdition; }
 
 protected:
-  virtual void Generate();
+  virtual void AddExtraIDETargets();
   virtual const char* GetIDEVersion() { return "8.0"; }
 
   virtual std::string FindDevEnvCommand();
@@ -80,22 +72,27 @@ protected:
   bool AddCheckTarget();
 
   /** Return true if the configuration needs to be deployed */
-  virtual bool NeedsDeploy(cmTarget::TargetType type) const;
+  virtual bool NeedsDeploy(cmStateEnums::TargetType type) const;
 
   static cmIDEFlagTable const* GetExtraFlagTableVS8();
   virtual void WriteSLNHeader(std::ostream& fout);
-  virtual void WriteSolutionConfigurations(std::ostream& fout);
+  virtual void WriteSolutionConfigurations(
+    std::ostream& fout, std::vector<std::string> const& configs);
   virtual void WriteProjectConfigurations(
-    std::ostream& fout, const std::string& name, cmTarget::TargetType type,
+    std::ostream& fout, const std::string& name,
+    cmGeneratorTarget const& target, std::vector<std::string> const& configs,
     const std::set<std::string>& configsPartOfDefaultBuild,
     const std::string& platformMapping = "");
   virtual bool ComputeTargetDepends();
-  virtual void WriteProjectDepends(std::ostream& fout,
-                                   const std::string& name,
-                                   const char* path, cmTarget const& t);
+  virtual void WriteProjectDepends(std::ostream& fout, const std::string& name,
+                                   const char* path,
+                                   const cmGeneratorTarget* t);
+
+  bool UseFolderProperty();
 
   std::string Name;
   std::string WindowsCEVersion;
+  bool ExpressEdition;
 
 private:
   class Factory;

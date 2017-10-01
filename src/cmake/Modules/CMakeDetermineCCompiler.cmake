@@ -1,16 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2002-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # determine the compiler to use for C programs
 # NOTE, a generator may set CMAKE_C_COMPILER before
@@ -34,6 +24,7 @@
 include(${CMAKE_ROOT}/Modules/CMakeDetermineCompiler.cmake)
 
 # Load system-specific compiler preferences for this language.
+include(Platform/${CMAKE_SYSTEM_NAME}-Determine-C OPTIONAL)
 include(Platform/${CMAKE_SYSTEM_NAME}-C OPTIONAL)
 if(NOT CMAKE_C_COMPILER_NAMES)
   set(CMAKE_C_COMPILER_NAMES cc)
@@ -80,12 +71,16 @@ else()
   # Each entry in this list is a set of extra flags to try
   # adding to the compile line to see if it helps produce
   # a valid identification file.
+  set(CMAKE_C_COMPILER_ID_TEST_FLAGS_FIRST)
   set(CMAKE_C_COMPILER_ID_TEST_FLAGS
     # Try compiling to an object file only.
     "-c"
 
     # Try enabling ANSI mode on HP.
     "-Aa"
+
+    # Try compiling K&R-compatible code (needed by Bruce C Compiler).
+    "-D__CLASSIC_C__"
     )
 endif()
 
@@ -95,25 +90,34 @@ if(NOT CMAKE_C_COMPILER_ID_RUN)
 
   # Try to identify the compiler.
   set(CMAKE_C_COMPILER_ID)
+  set(CMAKE_C_PLATFORM_ID)
   file(READ ${CMAKE_ROOT}/Modules/CMakePlatformId.h.in
     CMAKE_C_COMPILER_ID_PLATFORM_CONTENT)
 
   # The IAR compiler produces weird output.
-  # See http://www.cmake.org/Bug/view.php?id=10176#c19598
+  # See https://gitlab.kitware.com/cmake/cmake/issues/10176#note_153591
   list(APPEND CMAKE_C_COMPILER_ID_VENDORS IAR)
   set(CMAKE_C_COMPILER_ID_VENDOR_FLAGS_IAR )
   set(CMAKE_C_COMPILER_ID_VENDOR_REGEX_IAR "IAR .+ Compiler")
+
+  # Match the link line from xcodebuild output of the form
+  #  Ld ...
+  #      ...
+  #      /path/to/cc ...CompilerIdC/...
+  # to extract the compiler front-end for the language.
+  set(CMAKE_C_COMPILER_ID_TOOL_MATCH_REGEX "\nLd[^\n]*(\n[ \t]+[^\n]*)*\n[ \t]+([^ \t\r\n]+)[^\r\n]*-o[^\r\n]*CompilerIdC/(\\./)?(CompilerIdC.xctest/)?CompilerIdC[ \t\n\\\"]")
+  set(CMAKE_C_COMPILER_ID_TOOL_MATCH_INDEX 2)
 
   include(${CMAKE_ROOT}/Modules/CMakeDetermineCompilerId.cmake)
   CMAKE_DETERMINE_COMPILER_ID(C CFLAGS CMakeCCompilerId.c)
 
   # Set old compiler and platform id variables.
-  if(CMAKE_C_COMPILER_ID MATCHES "GNU")
+  if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
     set(CMAKE_COMPILER_IS_GNUCC 1)
   endif()
-  if("${CMAKE_C_PLATFORM_ID}" MATCHES "MinGW")
+  if(CMAKE_C_PLATFORM_ID MATCHES "MinGW")
     set(CMAKE_COMPILER_IS_MINGW 1)
-  elseif("${CMAKE_C_PLATFORM_ID}" MATCHES "Cygwin")
+  elseif(CMAKE_C_PLATFORM_ID MATCHES "Cygwin")
     set(CMAKE_COMPILER_IS_CYGWIN 1)
   endif()
 endif()
@@ -162,10 +166,18 @@ if (CMAKE_CROSSCOMPILING  AND NOT _CMAKE_TOOLCHAIN_PREFIX)
 endif ()
 
 include(CMakeFindBinUtils)
+set(_CMAKE_PROCESSING_LANGUAGE "C")
+include(Compiler/${CMAKE_C_COMPILER_ID}-FindBinUtils OPTIONAL)
+unset(_CMAKE_PROCESSING_LANGUAGE)
+
 if(MSVC_C_ARCHITECTURE_ID)
-  include(${CMAKE_ROOT}/Modules/CMakeClDeps.cmake)
   set(SET_MSVC_C_ARCHITECTURE_ID
     "set(MSVC_C_ARCHITECTURE_ID ${MSVC_C_ARCHITECTURE_ID})")
+endif()
+
+if(CMAKE_C_XCODE_CURRENT_ARCH)
+  set(SET_CMAKE_XCODE_CURRENT_ARCH
+    "set(CMAKE_XCODE_CURRENT_ARCH ${CMAKE_C_XCODE_CURRENT_ARCH})")
 endif()
 
 # configure variables set in this file for fast reload later on

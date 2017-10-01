@@ -1,16 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2002-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # This module is shared by multiple languages; use include blocker.
 if(__LINUX_COMPILER_INTEL)
@@ -40,12 +30,18 @@ macro(__linux_compiler_intel lang)
   # executables that use dlopen but do not set ENABLE_EXPORTS.
   set(CMAKE_SHARED_LIBRARY_LINK_${lang}_FLAGS "-rdynamic")
 
+  set(_CMAKE_${lang}_IPO_SUPPORTED_BY_CMAKE YES)
+
   if(XIAR)
     # INTERPROCEDURAL_OPTIMIZATION
     set(CMAKE_${lang}_COMPILE_OPTIONS_IPO -ipo)
     set(CMAKE_${lang}_CREATE_STATIC_LIBRARY_IPO
       "${XIAR} cr <TARGET> <LINK_FLAGS> <OBJECTS> "
       "${XIAR} -s <TARGET> ")
+    set(_CMAKE_${lang}_IPO_MAY_BE_SUPPORTED_BY_COMPILER YES)
+    set(_CMAKE_${lang}_IPO_LEGACY_BEHAVIOR YES)
+  else()
+    set(_CMAKE_${lang}_IPO_MAY_BE_SUPPORTED_BY_COMPILER NO)
   endif()
 
   if(NOT CMAKE_${lang}_COMPILER_VERSION VERSION_LESS 12.0)

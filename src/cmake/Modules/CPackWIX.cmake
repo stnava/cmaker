@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # CPackWIX
 # --------
@@ -16,7 +19,7 @@
 #
 #  Will be automatically generated unless explicitly provided.
 #
-#  It should be explicitly set to a constant generated gloabally unique
+#  It should be explicitly set to a constant generated globally unique
 #  identifier (GUID) to allow your installers to replace existing
 #  installations that use the same GUID.
 #
@@ -119,7 +122,8 @@
 #
 # .. variable:: CPACK_WIX_PATCH_FILE
 #
-#  Optional XML file with fragments to be inserted into generated WiX sources
+#  Optional list of XML files with fragments to be inserted into
+#  generated WiX sources
 #
 #  This optional variable can be used to specify an XML file that the
 #  WiX generator will use to inject fragments into its generated
@@ -146,7 +150,7 @@
 #     }
 #
 #  Currently fragments can be injected into most
-#  Component, File and Directory elements.
+#  Component, File, Directory and Feature elements.
 #
 #  The following additional special Ids can be used:
 #
@@ -226,43 +230,77 @@
 #  This variable can be used to provide a value for
 #  the Windows Installer property ``<PROPERTY>``
 #
-#  The follwing list contains some example properties that can be used to
+#  The following list contains some example properties that can be used to
 #  customize information under
 #  "Programs and Features" (also known as "Add or Remove Programs")
 #
 #  * ARPCOMMENTS - Comments
 #  * ARPHELPLINK - Help and support information URL
 #  * ARPURLINFOABOUT - General information URL
-#  * URLUPDATEINFO - Update information URL
+#  * ARPURLUPDATEINFO - Update information URL
 #  * ARPHELPTELEPHONE - Help and support telephone number
 #  * ARPSIZE - Size (in kilobytes) of the application
-
-#=============================================================================
-# Copyright 2014-2015 Kitware, Inc.
 #
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
+# .. variable:: CPACK_WIX_ROOT_FEATURE_TITLE
 #
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
+#  Sets the name of the root install feature in the WIX installer. Same as
+#  CPACK_COMPONENT_<compName>_DISPLAY_NAME for components.
+#
+# .. variable:: CPACK_WIX_ROOT_FEATURE_DESCRIPTION
+#
+#  Sets the description of the root install feature in the WIX installer. Same as
+#  CPACK_COMPONENT_<compName>_DESCRIPTION for components.
+#
+# .. variable:: CPACK_WIX_SKIP_PROGRAM_FOLDER
+#
+#  If this variable is set to true, the default install location
+#  of the generated package will be CPACK_PACKAGE_INSTALL_DIRECTORY directly.
+#  The install location will not be located relatively below
+#  ProgramFiles or ProgramFiles64.
+#
+#   .. note::
+#     Installers created with this feature do not take differences
+#     between the system on which the installer is created
+#     and the system on which the installer might be used into account.
+#
+#     It is therefor possible that the installer e.g. might try to install
+#     onto a drive that is unavailable or unintended or a path that does not
+#     follow the localization or convention of the system on which the
+#     installation is performed.
+#
+# .. variable:: CPACK_WIX_ROOT_FOLDER_ID
+#
+#  This variable allows specification of a custom root folder ID.
+#  The generator specific ``<64>`` token can be used for
+#  folder IDs that come in 32-bit and 64-bit variants.
+#  In 32-bit builds the token will expand empty while in 64-bit builds
+#  it will expand to ``64``.
+#
+#  When unset generated installers will default installing to
+#  ``ProgramFiles<64>Folder``.
+#
+# .. variable:: CPACK_WIX_ROOT
+#
+#  This variable can optionally be set to the root directory
+#  of a custom WiX Toolset installation.
+#
+#  When unspecified CPack will try to locate a WiX Toolset
+#  installation via the ``WIX`` environment variable instead.
+#
 
 if(NOT CPACK_WIX_ROOT)
   file(TO_CMAKE_PATH "$ENV{WIX}" CPACK_WIX_ROOT)
 endif()
 
 find_program(CPACK_WIX_CANDLE_EXECUTABLE candle
-  PATHS "${CPACK_WIX_ROOT}/bin")
+  PATHS "${CPACK_WIX_ROOT}" PATH_SUFFIXES "bin")
 
 if(NOT CPACK_WIX_CANDLE_EXECUTABLE)
   message(FATAL_ERROR "Could not find the WiX candle executable.")
 endif()
 
 find_program(CPACK_WIX_LIGHT_EXECUTABLE light
-  PATHS "${CPACK_WIX_ROOT}/bin")
+  PATHS "${CPACK_WIX_ROOT}" PATH_SUFFIXES "bin")
 
 if(NOT CPACK_WIX_LIGHT_EXECUTABLE)
   message(FATAL_ERROR "Could not find the WiX light executable.")

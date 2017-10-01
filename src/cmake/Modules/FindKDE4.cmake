@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindKDE4
 # --------
@@ -21,20 +24,6 @@
 # $KDEDIRS/share/apps/cmake/modules/.
 #
 # Author: Alexander Neundorf <neundorf@kde.org>
-
-#=============================================================================
-# Copyright 2006-2009 Kitware, Inc.
-# Copyright 2006 Alexander Neundorf <neundorf@kde.org>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # If Qt3 has already been found, fail.
 if(QT_QT_LIBRARY)
@@ -105,7 +94,7 @@ if (KDE4_DATA_DIR)
    endif ()
 
    # use FindKDE4Internal.cmake to do the rest
-   find_package(KDE4Internal ${_req} ${_quiet})
+   find_package(KDE4Internal ${_req} ${_quiet} NO_POLICY_SCOPE)
 else ()
    if (KDE4_FIND_REQUIRED)
       message(FATAL_ERROR "ERROR: cmake/modules/FindKDE4Internal.cmake not found in ${_data_DIR}")

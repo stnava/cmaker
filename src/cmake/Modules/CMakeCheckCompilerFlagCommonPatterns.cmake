@@ -1,19 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2006-2011 Kitware, Inc.
-# Copyright 2006 Alexander Neundorf <neundorf@kde.org>
-# Copyright 2011 Matthias Kretz <kretz@kde.org>
-# Copyright 2013 Rolf Eike Beer <eike@sf-mail.de>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # Do NOT include this module directly into any of your code. It is meant as
 # a library for Check*CompilerFlag.cmake modules. It's content may change in
@@ -23,6 +10,8 @@ macro (CHECK_COMPILER_FLAG_COMMON_PATTERNS _VAR)
    set(${_VAR}
      FAIL_REGEX "[Uu]nrecogni[sz]ed .*option"               # GNU, NAG
      FAIL_REGEX "unknown .*option"                          # Clang
+     FAIL_REGEX "optimization flag .* not supported"        # Clang
+     FAIL_REGEX "unknown argument ignored"                  # Clang (cl)
      FAIL_REGEX "ignoring unknown option"                   # MSVC, Intel
      FAIL_REGEX "warning D9002"                             # MSVC, any lang
      FAIL_REGEX "option.*not supported"                     # Intel
@@ -33,6 +22,7 @@ macro (CHECK_COMPILER_FLAG_COMMON_PATTERNS _VAR)
      FAIL_REGEX "[Ww]arning: [Oo]ption"                     # SunPro
      FAIL_REGEX "command option .* is not recognized"       # XL
      FAIL_REGEX "command option .* contains an incorrect subargument" # XL
+     FAIL_REGEX "Option .* is not recognized.  Option will be ignored." # XL
      FAIL_REGEX "not supported in this configuration. ignored"       # AIX
      FAIL_REGEX "File with unknown suffix passed to linker" # PGI
      FAIL_REGEX "[Uu]nknown switch"                         # PGI

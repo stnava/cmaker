@@ -1,27 +1,32 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmLocalGenerator_h
 #define cmLocalGenerator_h
 
-#include "cmStandardIncludes.h"
+#include "cmConfigure.h"
 
-class cmMakefile;
-class cmGlobalGenerator;
-class cmGeneratorTarget;
-class cmTarget;
-class cmTargetManifest;
-class cmSourceFile;
-class cmCustomCommand;
+#include "cm_kwiml.h"
+#include <iosfwd>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "cmListFileCache.h"
+#include "cmOutputConverter.h"
+#include "cmPolicies.h"
+#include "cmStateSnapshot.h"
+#include "cmake.h"
+
+class cmComputeLinkInformation;
 class cmCustomCommandGenerator;
+class cmGeneratorTarget;
+class cmGlobalGenerator;
+class cmLinkLineComputer;
+class cmMakefile;
+class cmRulePlaceholderExpander;
+class cmSourceFile;
+class cmState;
 
 /** \class cmLocalGenerator
  * \brief Create required build files for a directory.
@@ -30,10 +35,10 @@ class cmCustomCommandGenerator;
  * platforms. This class should never be constructed directly. A
  * GlobalGenerator will create it and invoke the appropriate commands on it.
  */
-class cmLocalGenerator
+class cmLocalGenerator : public cmOutputConverter
 {
 public:
-  cmLocalGenerator();
+  cmLocalGenerator(cmGlobalGenerator* gg, cmMakefile* makefile);
   virtual ~cmLocalGenerator();
 
   /**
@@ -41,11 +46,7 @@ public:
    */
   virtual void Generate() {}
 
-  /**
-   * Process the CMakeLists files for this directory to fill in the
-   * Makefile ivar
-   */
-  virtual void Configure();
+  virtual void ComputeHomeRelativeOutputPath() {}
 
   /**
    * Calls TraceVSDependencies() on all targets of this generator.
@@ -53,11 +54,6 @@ public:
   void TraceDependencies();
 
   virtual void AddHelperCommands() {}
-
-  /**
-   * Perform any final calculations prior to generation
-   */
-  void ConfigureFinalPass();
 
   /**
    * Generate the install rules files in this directory.
@@ -72,122 +68,114 @@ public:
   /**
    * Generate a manifest of target files that will be built.
    */
-  void GenerateTargetManifest();
+  void ComputeTargetManifest();
+
+  bool ComputeTargetCompileFeatures();
+
+  bool IsRootMakefile() const;
 
   ///! Get the makefile for this generator
-  cmMakefile *GetMakefile() {
-    return this->Makefile; }
+  cmMakefile* GetMakefile() { return this->Makefile; }
 
   ///! Get the makefile for this generator, const version
-    const cmMakefile *GetMakefile() const {
-      return this->Makefile; }
+  const cmMakefile* GetMakefile() const { return this->Makefile; }
 
   ///! Get the GlobalGenerator this is associated with
-  cmGlobalGenerator *GetGlobalGenerator() {
-    return this->GlobalGenerator; }
-  const cmGlobalGenerator *GetGlobalGenerator() const {
-    return this->GlobalGenerator; }
+  cmGlobalGenerator* GetGlobalGenerator() { return this->GlobalGenerator; }
+  const cmGlobalGenerator* GetGlobalGenerator() const
+  {
+    return this->GlobalGenerator;
+  }
 
-  ///! Set the Global Generator, done on creation by the GlobalGenerator
-  void SetGlobalGenerator(cmGlobalGenerator *gg);
+  virtual cmRulePlaceholderExpander* CreateRulePlaceholderExpander() const;
 
-  /**
-   * Convert something to something else. This is a centralized conversion
-   * routine used by the generators to handle relative paths and the like.
-   * The flags determine what is actually done.
-   *
-   * relative: treat the argument as a directory and convert it to make it
-   * relative or full or unchanged. If relative (HOME, START etc) then that
-   * specifies what it should be relative to.
-   *
-   * output: make the result suitable for output to a...
-   *
-   * optional: should any relative path operation be controlled by the rel
-   * path setting
-   */
-  enum RelativeRoot { NONE, FULL, HOME, START, HOME_OUTPUT, START_OUTPUT };
-  enum OutputFormat { UNCHANGED, MAKERULE, SHELL, WATCOMQUOTE, RESPONSE };
-  std::string ConvertToOutputFormat(const std::string& source,
-                                    OutputFormat output);
-  std::string Convert(const std::string& remote, RelativeRoot local,
-                      OutputFormat output = UNCHANGED,
-                      bool optional = false);
-  std::string Convert(RelativeRoot remote, const std::string& local,
-                      OutputFormat output = UNCHANGED,
-                      bool optional = false);
+  std::string GetLinkLibsCMP0065(std::string const& linkLanguage,
+                                 cmGeneratorTarget& tgt) const;
 
-  /**
-    * Get path for the specified relative root.
-    */
-  const char* GetRelativeRootPath(RelativeRoot relroot);
+  cmState* GetState() const;
+  cmStateSnapshot GetStateSnapshot() const;
 
-  /**
-   * Convert the given path to an output path that is optionally
-   * relative based on the cache option CMAKE_USE_RELATIVE_PATHS.  The
-   * remote path must use forward slashes and not already be escaped
-   * or quoted.
-   */
-  std::string ConvertToOptionallyRelativeOutputPath(const std::string& remote);
+  void AddArchitectureFlags(std::string& flags,
+                            cmGeneratorTarget const* target,
+                            const std::string& lang,
+                            const std::string& config);
 
-  ///! set/get the parent generator
-  cmLocalGenerator* GetParent() const {return this->Parent;}
-  void SetParent(cmLocalGenerator* g) { this->Parent = g; g->AddChild(this); }
-
-  ///! set/get the children
-  void AddChild(cmLocalGenerator* g) { this->Children.push_back(g); }
-  std::vector<cmLocalGenerator*>& GetChildren() { return this->Children; }
-
-
-  void AddArchitectureFlags(std::string& flags, cmGeneratorTarget* target,
-                            const std::string&lang, const std::string& config);
-
-  void AddLanguageFlags(std::string& flags, const std::string& lang,
-                        const std::string& config);
-  void AddCMP0018Flags(std::string &flags, cmTarget* target,
+  void AddLanguageFlags(std::string& flags, cmGeneratorTarget const* target,
+                        const std::string& lang, const std::string& config);
+  void AddLanguageFlagsForLinking(std::string& flags,
+                                  cmGeneratorTarget const* target,
+                                  const std::string& lang,
+                                  const std::string& config);
+  void AddCMP0018Flags(std::string& flags, cmGeneratorTarget const* target,
                        std::string const& lang, const std::string& config);
-  void AddVisibilityPresetFlags(std::string &flags, cmTarget* target,
+  void AddVisibilityPresetFlags(std::string& flags,
+                                cmGeneratorTarget const* target,
                                 const std::string& lang);
   void AddConfigVariableFlags(std::string& flags, const std::string& var,
                               const std::string& config);
-  void AddCompilerRequirementFlag(std::string &flags, cmTarget* target,
+  void AddCompilerRequirementFlag(std::string& flags,
+                                  cmGeneratorTarget const* target,
                                   const std::string& lang);
   ///! Append flags to a string.
   virtual void AppendFlags(std::string& flags, const std::string& newFlags);
   virtual void AppendFlags(std::string& flags, const char* newFlags);
   virtual void AppendFlagEscape(std::string& flags,
                                 const std::string& rawFlag);
+  void AppendIPOLinkerFlags(std::string& flags, cmGeneratorTarget* target,
+                            const std::string& config,
+                            const std::string& lang);
   ///! Get the include flags for the current makefile and language
-  std::string GetIncludeFlags(const std::vector<std::string> &includes,
+  std::string GetIncludeFlags(const std::vector<std::string>& includes,
                               cmGeneratorTarget* target,
                               const std::string& lang,
                               bool forceFullPaths = false,
                               bool forResponseFile = false,
                               const std::string& config = "");
 
+  const std::vector<cmGeneratorTarget*>& GetGeneratorTargets() const
+  {
+    return this->GeneratorTargets;
+  }
+
+  const std::vector<cmGeneratorTarget*>& GetImportedGeneratorTargets() const
+  {
+    return this->ImportedGeneratorTargets;
+  }
+
+  void AddGeneratorTarget(cmGeneratorTarget* gt);
+  void AddImportedGeneratorTarget(cmGeneratorTarget* gt);
+  void AddOwnedImportedGeneratorTarget(cmGeneratorTarget* gt);
+
+  cmGeneratorTarget* FindLocalNonAliasGeneratorTarget(
+    const std::string& name) const;
+  cmGeneratorTarget* FindGeneratorTargetToUse(const std::string& name) const;
+
   /**
    * Encode a list of preprocessor definitions for the compiler
    * command line.
    */
   void AppendDefines(std::set<std::string>& defines,
-                     const char* defines_list);
+                     const char* defines_list) const;
   void AppendDefines(std::set<std::string>& defines,
-                     std::string defines_list)
+                     std::string const& defines_list) const
   {
     this->AppendDefines(defines, defines_list.c_str());
   }
   void AppendDefines(std::set<std::string>& defines,
-                     const std::vector<std::string> &defines_vec);
+                     const std::vector<std::string>& defines_vec) const;
 
   /**
    * Join a set of defines into a definesString with a space separator.
    */
   void JoinDefines(const std::set<std::string>& defines,
-                   std::string &definesString,
-                   const std::string& lang);
+                   std::string& definesString, const std::string& lang);
 
   /** Lookup and append options associated with a particular feature.  */
   void AppendFeatureOptions(std::string& flags, const std::string& lang,
                             const char* feature);
+
+  const char* GetFeature(const std::string& feature,
+                         const std::string& config);
 
   /** \brief Get absolute path to dependency \a name
    *
@@ -204,130 +192,49 @@ public:
   bool GetRealDependency(const std::string& name, const std::string& config,
                          std::string& dep);
 
-  ///! for existing files convert to output path and short path if spaces
-  std::string ConvertToOutputForExisting(const std::string& remote,
-                                         RelativeRoot local = START_OUTPUT,
-                                         OutputFormat format = SHELL);
-
-  /** For existing path identified by RelativeRoot convert to output
-      path and short path if spaces.  */
-  std::string ConvertToOutputForExisting(RelativeRoot remote,
-                                         const std::string& local = "",
-                                         OutputFormat format = SHELL);
-
-  virtual std::string ConvertToIncludeReference(std::string const& path,
-                                                OutputFormat format = SHELL,
-                                                bool forceFullPaths = false);
+  virtual std::string ConvertToIncludeReference(
+    std::string const& path,
+    cmOutputConverter::OutputFormat format = cmOutputConverter::SHELL,
+    bool forceFullPaths = false);
 
   /** Called from command-line hook to clear dependencies.  */
-  virtual void ClearDependencies(cmMakefile* /* mf */,
-                                 bool /* verbose */) {}
+  virtual void ClearDependencies(cmMakefile* /* mf */, bool /* verbose */) {}
 
   /** Called from command-line hook to update dependencies.  */
-  virtual bool UpdateDependencies(const char* /* tgtInfo */,
-                                  bool /*verbose*/,
+  virtual bool UpdateDependencies(const char* /* tgtInfo */, bool /*verbose*/,
                                   bool /*color*/)
-    { return true; }
+  {
+    return true;
+  }
 
   /** Get the include flags for the current makefile and language.  */
   void GetIncludeDirectories(std::vector<std::string>& dirs,
-                             cmGeneratorTarget* target,
+                             cmGeneratorTarget const* target,
                              const std::string& lang = "C",
                              const std::string& config = "",
-                             bool stripImplicitInclDirs = true);
-  void AddCompileOptions(std::string& flags, cmTarget* target,
+                             bool stripImplicitInclDirs = true) const;
+  void AddCompileOptions(std::string& flags, cmGeneratorTarget* target,
                          const std::string& lang, const std::string& config);
   void AddCompileDefinitions(std::set<std::string>& defines,
-                             cmTarget const* target,
+                             cmGeneratorTarget const* target,
                              const std::string& config,
-                             const std::string& lang);
+                             const std::string& lang) const;
+
+  std::string GetProjectName() const;
 
   /** Compute the language used to compile the given source file.  */
   std::string GetSourceFileLanguage(const cmSourceFile& source);
 
   // Fill the vector with the target names for the object files,
   // preprocessed files and assembly files.
-  virtual void GetIndividualFileTargets(std::vector<std::string>&) {}
-
-  // Create a struct to hold the varibles passed into
-  // ExpandRuleVariables
-  struct RuleVariables
-  {
-    RuleVariables()
-      {
-        memset(this, 0,  sizeof(*this));
-      }
-    cmTarget* CMTarget;
-    const char* TargetPDB;
-    const char* TargetCompilePDB;
-    const char* TargetVersionMajor;
-    const char* TargetVersionMinor;
-    const char* Language;
-    const char* Objects;
-    const char* Target;
-    const char* LinkLibraries;
-    const char* Source;
-    const char* AssemblySource;
-    const char* PreprocessedSource;
-    const char* Output;
-    const char* Object;
-    const char* ObjectDir;
-    const char* ObjectFileDir;
-    const char* Flags;
-    const char* ObjectsQuoted;
-    const char* SONameFlag;
-    const char* TargetSOName;
-    const char* TargetInstallNameDir;
-    const char* LinkFlags;
-    const char* LanguageCompileFlags;
-    const char* Defines;
-    const char* RuleLauncher;
-    const char* DependencyFile;
-    const char* FilterPrefix;
-  };
-
-  /** Set whether to treat conversions to SHELL as a link script shell.  */
-  void SetLinkScriptShell(bool b) { this->LinkScriptShell = b; }
-
-  /** Escape the given string to be used as a command line argument in
-      the native build system shell.  Optionally allow the build
-      system to replace make variable references.  Optionally adjust
-      escapes for the special case of passing to the native echo
-      command.  */
-  std::string EscapeForShell(const std::string& str, bool makeVars = false,
-                             bool forEcho = false,
-                             bool useWatcomQuote = false);
-
-  /** Backwards-compatibility version of EscapeForShell.  */
-  std::string EscapeForShellOldStyle(const std::string& str);
-
-  /** Escape the given string as an argument in a CMake script.  */
-  static std::string EscapeForCMake(const std::string& str);
-
-  enum FortranFormat
-    {
-    FortranFormatNone,
-    FortranFormatFixed,
-    FortranFormatFree
-    };
-  FortranFormat GetFortranFormat(const char* value);
-
-  /**
-   * Convert the given remote path to a relative path with respect to
-   * the given local path.  The local path must be given in component
-   * form (see SystemTools::SplitPath) without a trailing slash.  The
-   * remote path must use forward slashes and not already be escaped
-   * or quoted.
-   */
-  std::string ConvertToRelativePath(const std::vector<std::string>& local,
-                                    const std::string& remote,
-                                    bool force=false);
+  void GetIndividualFileTargets(std::vector<std::string>&) {}
 
   /**
    * Get the relative path from the generator output directory to a
    * per-target support directory.
    */
-  virtual std::string GetTargetDirectory(cmTarget const& target) const;
+  virtual std::string GetTargetDirectory(
+    cmGeneratorTarget const* target) const;
 
   /**
    * Get the level of backwards compatibility requested by the project
@@ -339,89 +246,92 @@ public:
    *
    * and is monotonically increasing with the CMake version.
    */
-  cmIML_INT_uint64_t GetBackwardsCompatibility();
+  KWIML_INT_uint64_t GetBackwardsCompatibility();
 
   /**
    * Test whether compatibility is set to a given version or lower.
    */
   bool NeedBackwardsCompatibility_2_4();
 
+  cmPolicies::PolicyStatus GetPolicyStatus(cmPolicies::PolicyID id) const;
+
+  cmake* GetCMakeInstance() const;
+
+  const char* GetSourceDirectory() const;
+  const char* GetBinaryDirectory() const;
+
+  const char* GetCurrentBinaryDirectory() const;
+  const char* GetCurrentSourceDirectory() const;
+
   /**
    * Generate a Mac OS X application bundle Info.plist file.
    */
-  void GenerateAppleInfoPList(cmTarget* target, const std::string& targetName,
+  void GenerateAppleInfoPList(cmGeneratorTarget* target,
+                              const std::string& targetName,
                               const char* fname);
 
   /**
    * Generate a Mac OS X framework Info.plist file.
    */
-  void GenerateFrameworkInfoPList(cmTarget* target,
+  void GenerateFrameworkInfoPList(cmGeneratorTarget* target,
                                   const std::string& targetName,
                                   const char* fname);
   /** Construct a comment for a custom command.  */
   std::string ConstructComment(cmCustomCommandGenerator const& ccg,
                                const char* default_comment = "");
   // Compute object file names.
-  std::string GetObjectFileNameWithoutTarget(const cmSourceFile& source,
-                                             std::string const& dir_max,
-                                             bool* hasSourceExtension = 0);
+  std::string GetObjectFileNameWithoutTarget(
+    const cmSourceFile& source, std::string const& dir_max,
+    bool* hasSourceExtension = CM_NULLPTR,
+    char const* customOutputExtension = CM_NULLPTR);
 
   /** Fill out the static linker flags for the given target.  */
-  void GetStaticLibraryFlags(std::string& flags,
-                             std::string const& config,
-                             cmTarget* target);
+  void GetStaticLibraryFlags(std::string& flags, std::string const& config,
+                             cmGeneratorTarget* target);
 
   /** Fill out these strings for the given target.  Libraries to link,
    *  flags, and linkflags. */
-  void GetTargetFlags(std::string& linkLibs,
-                      std::string& flags,
-                      std::string& linkFlags,
-                      std::string& frameworkPath,
-                      std::string& linkPath,
-                      cmGeneratorTarget* target,
-                      bool useWatcomQuote);
+  void GetTargetFlags(cmLinkLineComputer* linkLineComputer,
+                      const std::string& config, std::string& linkLibs,
+                      std::string& flags, std::string& linkFlags,
+                      std::string& frameworkPath, std::string& linkPath,
+                      cmGeneratorTarget* target);
+  void GetTargetDefines(cmGeneratorTarget const* target,
+                        std::string const& config, std::string const& lang,
+                        std::set<std::string>& defines) const;
+  void GetTargetCompileFlags(cmGeneratorTarget* target,
+                             std::string const& config,
+                             std::string const& lang, std::string& flags);
+
+  std::string GetFrameworkFlags(std::string const& l,
+                                std::string const& config,
+                                cmGeneratorTarget* target);
+  virtual std::string GetTargetFortranFlags(cmGeneratorTarget const* target,
+                                            std::string const& config);
 
   virtual void ComputeObjectFilenames(
-                        std::map<cmSourceFile const*, std::string>& mapping,
-                        cmGeneratorTarget const* gt = 0);
+    std::map<cmSourceFile const*, std::string>& mapping,
+    cmGeneratorTarget const* gt = CM_NULLPTR);
+
+  bool IsWindowsShell() const;
+  bool IsWatcomWMake() const;
+  bool IsMinGWMake() const;
+  bool IsNMake() const;
+
+  void IssueMessage(cmake::MessageType t, std::string const& text) const;
+
+  void CreateEvaluationFileOutputs(const std::string& config);
+  void ProcessEvaluationFiles(std::vector<std::string>& generatedFiles);
+
+  const char* GetRuleLauncher(cmGeneratorTarget* target,
+                              const std::string& prop);
 
 protected:
   ///! put all the libraries for a target on into the given stream
-  virtual void OutputLinkLibraries(std::string& linkLibraries,
-                                   std::string& frameworkPath,
-                                   std::string& linkPath,
-                                   cmGeneratorTarget &,
-                                   bool relink,
-                                   bool forResponseFile,
-                                   bool useWatcomQuote);
-
-  // Expand rule variables in CMake of the type found in language rules
-  void ExpandRuleVariables(std::string& string,
-                           const RuleVariables& replaceValues);
-  // Expand rule variables in a single string
-  std::string ExpandRuleVariable(std::string const& variable,
-                                 const RuleVariables& replaceValues);
-
-  const char* GetRuleLauncher(cmTarget* target, const std::string& prop);
-  void InsertRuleLauncher(std::string& s, cmTarget* target,
-                          const std::string& prop);
-
-
-  /** Convert a target to a utility target for unsupported
-   *  languages of a generator */
-  void AddBuildTargetRule(const std::string& llang,
-                          cmGeneratorTarget& target);
-  ///! add a custom command to build a .o file that is part of a target
-  void AddCustomCommandToCreateObject(const char* ofname,
-                                      const std::string& lang,
-                                      cmSourceFile& source,
-                                      cmGeneratorTarget& target);
-  // Create Custom Targets and commands for unsupported languages
-  // The set passed in should contain the languages supported by the
-  // generator directly.  Any targets containing files that are not
-  // of the types listed will be compiled as custom commands and added
-  // to a custom target.
-  void CreateCustomTargetsAndCommands(std::set<std::string> const&);
+  void OutputLinkLibraries(cmComputeLinkInformation* pcli,
+                           cmLinkLineComputer* linkLineComputer,
+                           std::string& linkLibraries,
+                           std::string& frameworkPath, std::string& linkPath);
 
   // Handle old-style install rules stored in the targets.
   void GenerateTargetInstallRules(
@@ -430,75 +340,49 @@ protected:
 
   std::string& CreateSafeUniqueObjectFileName(const std::string& sin,
                                               std::string const& dir_max);
-  void ComputeObjectMaxPath();
-
-  void ConfigureRelativePaths();
-  std::string FindRelativePathTopSource();
-  std::string FindRelativePathTopBinary();
-  void SetupPathConversions();
-
-  virtual std::string ConvertToLinkReference(std::string const& lib,
-                                             OutputFormat format = SHELL);
 
   /** Check whether the native build system supports the given
       definition.  Issues a warning.  */
   virtual bool CheckDefinition(std::string const& define) const;
 
-  /** Read the input CMakeLists.txt file.  */
-  void ReadInputFile();
-
-  cmMakefile *Makefile;
-  cmGlobalGenerator *GlobalGenerator;
-  // members used for relative path function ConvertToMakefilePath
-  std::string RelativePathToSourceDir;
-  std::string RelativePathToBinaryDir;
-  std::vector<std::string> HomeDirectoryComponents;
-  std::vector<std::string> StartDirectoryComponents;
-  std::vector<std::string> HomeOutputDirectoryComponents;
-  std::vector<std::string> StartOutputDirectoryComponents;
-  cmLocalGenerator* Parent;
-  std::vector<cmLocalGenerator*> Children;
+  cmMakefile* Makefile;
+  cmStateSnapshot StateSnapshot;
+  cmListFileBacktrace DirectoryBacktrace;
+  cmGlobalGenerator* GlobalGenerator;
   std::map<std::string, std::string> UniqueObjectNamesMap;
   std::string::size_type ObjectPathMax;
   std::set<std::string> ObjectMaxPathViolations;
-  bool WindowsShell;
-  bool WindowsVSIDE;
-  bool WatcomWMake;
-  bool MinGWMake;
-  bool NMake;
-  bool ForceUnixPath;
-  bool MSYSShell;
-  bool LinkScriptShell;
-  bool UseRelativePaths;
-  bool IgnoreLibPrefix;
-  bool Configured;
+
+  std::set<cmGeneratorTarget const*> WarnCMP0063;
+  std::vector<cmGeneratorTarget*> GeneratorTargets;
+  std::vector<cmGeneratorTarget*> ImportedGeneratorTargets;
+  std::vector<cmGeneratorTarget*> OwnedImportedGeneratorTargets;
+  std::map<std::string, std::string> AliasTargets;
+
+  std::map<std::string, std::string> Compilers;
+  std::map<std::string, std::string> VariableMappings;
+  std::string CompilerSysroot;
+  std::string LinkerSysroot;
+
   bool EmitUniversalBinaryFlags;
-  // Hack for ExpandRuleVariable until object-oriented version is
-  // committed.
-  std::string TargetImplib;
 
-  // The top-most directories for relative path conversion.  Both the
-  // source and destination location of a relative path conversion
-  // must be underneath one of these directories (both under source or
-  // both under binary) in order for the relative path to be evaluated
-  // safely by the build tools.
-  std::string RelativePathTopSource;
-  std::string RelativePathTopBinary;
-  bool RelativePathsConfigured;
-  bool PathConversionsSetup;
-
-  cmIML_INT_uint64_t BackwardsCompatibility;
+  KWIML_INT_uint64_t BackwardsCompatibility;
   bool BackwardsCompatibilityFinal;
-private:
-  std::string ConvertToOutputForExistingCommon(const std::string& remote,
-                                               std::string const& result,
-                                               OutputFormat format);
 
+private:
   void AddSharedFlags(std::string& flags, const std::string& lang,
                       bool shared);
-  bool GetShouldUseOldFlags(bool shared, const std::string &lang) const;
+  bool GetShouldUseOldFlags(bool shared, const std::string& lang) const;
   void AddPositionIndependentFlags(std::string& flags, std::string const& l,
                                    int targetType);
+
+  void ComputeObjectMaxPath();
 };
+
+#if defined(CMAKE_BUILD_WITH_CMAKE)
+bool cmLocalGeneratorCheckObjectName(std::string& objName,
+                                     std::string::size_type dir_len,
+                                     std::string::size_type max_total_len);
+#endif
 
 #endif

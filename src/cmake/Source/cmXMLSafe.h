@@ -1,19 +1,12 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmXMLSafe_h
 #define cmXMLSafe_h
 
-#include <cmsys/stl/string>
-#include <cmsys/ios/iosfwd>
+#include "cmConfigure.h" // IWYU pragma: keep
+
+#include <iosfwd>
+#include <string>
 
 /** \class cmXMLSafe
  * \brief Write strings to XML with proper escapes
@@ -33,12 +26,12 @@ public:
 
   /** Get the escaped data as a string.  */
   std::string str();
+
 private:
   char const* Data;
   unsigned long Size;
   bool DoQuotes;
-  friend cmsys_ios::ostream& operator<<(cmsys_ios::ostream&,
-                                        cmXMLSafe const&);
+  friend std::ostream& operator<<(std::ostream&, cmXMLSafe const&);
 };
 
 #endif

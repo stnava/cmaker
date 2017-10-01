@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 
 # search for additional tools required for C/C++ (and other languages ?)
 #
@@ -16,25 +19,17 @@
 
 # on UNIX, cygwin and mingw
 
-#=============================================================================
-# Copyright 2007-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
 # if it's the MS C/CXX compiler, search for link
 if("x${CMAKE_C_SIMULATE_ID}" STREQUAL "xMSVC"
    OR "x${CMAKE_CXX_SIMULATE_ID}" STREQUAL "xMSVC"
    OR "x${CMAKE_Fortran_SIMULATE_ID}" STREQUAL "xMSVC"
    OR "x${CMAKE_C_COMPILER_ID}" STREQUAL "xMSVC"
    OR "x${CMAKE_CXX_COMPILER_ID}" STREQUAL "xMSVC"
+   OR "x${CMAKE_CUDA_SIMULATE_ID}" STREQUAL "xMSVC"
+   OR (CMAKE_HOST_WIN32 AND (
+        "x${CMAKE_C_COMPILER_ID}" STREQUAL "xPGI"
+         OR "x${CMAKE_Fortran_COMPILER_ID}" STREQUAL "xPGI"
+   ))
    OR (CMAKE_GENERATOR MATCHES "Visual Studio"
        AND NOT CMAKE_VS_PLATFORM_NAME STREQUAL "Tegra-Android"))
 

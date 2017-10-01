@@ -1,14 +1,5 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmGlobalNMakeMakefileGenerator_h
 #define cmGlobalNMakeMakefileGenerator_h
 
@@ -22,27 +13,38 @@
 class cmGlobalNMakeMakefileGenerator : public cmGlobalUnixMakefileGenerator3
 {
 public:
-  cmGlobalNMakeMakefileGenerator();
-  static cmGlobalGeneratorFactory* NewFactory() {
-    return new cmGlobalGeneratorSimpleFactory
-      <cmGlobalNMakeMakefileGenerator>(); }
+  cmGlobalNMakeMakefileGenerator(cmake* cm);
+  static cmGlobalGeneratorFactory* NewFactory()
+  {
+    return new cmGlobalGeneratorSimpleFactory<
+      cmGlobalNMakeMakefileGenerator>();
+  }
   ///! Get the name for the generator.
-  virtual std::string GetName() const {
-    return cmGlobalNMakeMakefileGenerator::GetActualName();}
-  static std::string GetActualName() {return "NMake Makefiles";}
+  virtual std::string GetName() const
+  {
+    return cmGlobalNMakeMakefileGenerator::GetActualName();
+  }
+  static std::string GetActualName() { return "NMake Makefiles"; }
+
+  /** Get encoding used by generator for makefile files */
+  codecvt::Encoding GetMakefileEncoding() const CM_OVERRIDE
+  {
+    return codecvt::ANSI;
+  }
 
   /** Get the documentation entry for this generator.  */
   static void GetDocumentation(cmDocumentationEntry& entry);
-
-  ///! Create a local generator appropriate to this Global Generator
-  virtual cmLocalGenerator *CreateLocalGenerator();
 
   /**
    * Try to determine system information such as shared library
    * extension, pthreads, byte order etc.
    */
-  virtual void EnableLanguage(std::vector<std::string>const& languages,
-                              cmMakefile *, bool optional);
+  virtual void EnableLanguage(std::vector<std::string> const& languages,
+                              cmMakefile*, bool optional);
+
+private:
+  void PrintCompilerAdvice(std::ostream& os, std::string const& lang,
+                           const char* envVar) const;
 };
 
 #endif

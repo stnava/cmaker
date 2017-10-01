@@ -1,53 +1,75 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-#if defined(_WIN32) && !defined(__CYGWIN__)
-#include "windows.h" // this must be first to define GetCurrentDirectory
-#if defined(_MSC_VER) && _MSC_VER >= 1800
-# define KWSYS_WINDOWS_DEPRECATED_GetVersionEx
-#endif
-#endif
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmGlobalGenerator.h"
-#include "cmLocalGenerator.h"
-#include "cmExternalMakefileProjectGenerator.h"
-#include "cmake.h"
-#include "cmMakefile.h"
-#include "cmQtAutoGenerators.h"
-#include "cmSourceFile.h"
-#include "cmVersion.h"
-#include "cmTargetExport.h"
-#include "cmComputeTargetDepends.h"
-#include "cmGeneratedFileStream.h"
-#include "cmGeneratorTarget.h"
-#include "cmGeneratorExpression.h"
-#include "cmGeneratorExpressionEvaluationFile.h"
-#include "cmExportBuildFileGenerator.h"
-#include "cmCPackPropertiesGenerator.h"
-#include "cmAlgorithms.h"
 
-#include <cmsys/Directory.hxx>
-#include <cmsys/FStream.hxx>
+#include "cmsys/Directory.hxx"
+#include "cmsys/FStream.hxx"
+#include <algorithm>
+#include <assert.h>
+#include <iterator>
+#include <sstream>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(_WIN32) && !defined(__CYGWIN__)
+#include <windows.h>
+#endif
+
+#include "cmAlgorithms.h"
+#include "cmCPackPropertiesGenerator.h"
+#include "cmComputeTargetDepends.h"
+#include "cmCustomCommand.h"
+#include "cmCustomCommandLines.h"
+#include "cmExportBuildFileGenerator.h"
+#include "cmExternalMakefileProjectGenerator.h"
+#include "cmGeneratedFileStream.h"
+#include "cmGeneratorExpression.h"
+#include "cmGeneratorTarget.h"
+#include "cmInstallGenerator.h"
+#include "cmLinkLineComputer.h"
+#include "cmLocalGenerator.h"
+#include "cmMSVC60LinkLineComputer.h"
+#include "cmMakefile.h"
+#include "cmOutputConverter.h"
+#include "cmPolicies.h"
+#include "cmQtAutoGeneratorInitializer.h"
+#include "cmSourceFile.h"
+#include "cmState.h"
+#include "cmStateDirectory.h"
+#include "cmStateTypes.h"
+#include "cmVersion.h"
+#include "cmWorkingDirectory.h"
+#include "cmake.h"
 
 #if defined(CMAKE_BUILD_WITH_CMAKE)
-# include <cmsys/MD5.h>
-# include "cm_jsoncpp_value.h"
-# include "cm_jsoncpp_writer.h"
+#include "cmCryptoHash.h"
+#include "cm_jsoncpp_value.h"
+#include "cm_jsoncpp_writer.h"
 #endif
 
-#include <stdlib.h> // required for atof
+#if defined(_MSC_VER) && _MSC_VER >= 1800
+#define KWSYS_WINDOWS_DEPRECATED_GetVersionEx
+#endif
 
-#include <assert.h>
+const std::string kCMAKE_PLATFORM_INFO_INITIALIZED =
+  "CMAKE_PLATFORM_INFO_INITIALIZED";
 
-cmGlobalGenerator::cmGlobalGenerator()
+class cmInstalledFile;
+
+bool cmTarget::StrictTargetComparison::operator()(cmTarget const* t1,
+                                                  cmTarget const* t2) const
+{
+  int nameResult = strcmp(t1->GetName().c_str(), t2->GetName().c_str());
+  if (nameResult == 0) {
+    return strcmp(t1->GetMakefile()->GetCurrentBinaryDirectory(),
+                  t2->GetMakefile()->GetCurrentBinaryDirectory()) < 0;
+  }
+  return nameResult < 0;
+}
+
+cmGlobalGenerator::cmGlobalGenerator(cmake* cm)
+  : CMakeInstance(cm)
 {
   // By default the .SYMBOLIC dependency is not needed on symbolic rules.
   this->NeedSymbolicMark = false;
@@ -67,9 +89,20 @@ cmGlobalGenerator::cmGlobalGenerator()
   // how long to let try compiles run
   this->TryCompileTimeout = 0;
 
-  this->ExtraGenerator = 0;
-  this->CurrentLocalGenerator = 0;
-  this->TryCompileOuterMakefile = 0;
+  this->ExtraGenerator = CM_NULLPTR;
+  this->CurrentMakefile = CM_NULLPTR;
+  this->TryCompileOuterMakefile = CM_NULLPTR;
+
+  this->ConfigureDoneCMP0026AndCMP0024 = false;
+  this->FirstTimeProgress = 0.0f;
+
+  cm->GetState()->SetIsGeneratorMultiConfig(false);
+  cm->GetState()->SetMinGWMake(false);
+  cm->GetState()->SetMSYSShell(false);
+  cm->GetState()->SetNMake(false);
+  cm->GetState()->SetWatcomWMake(false);
+  cm->GetState()->SetWindowsShell(false);
+  cm->GetState()->SetWindowsVSIDE(false);
 }
 
 cmGlobalGenerator::~cmGlobalGenerator()
@@ -81,139 +114,114 @@ cmGlobalGenerator::~cmGlobalGenerator()
 bool cmGlobalGenerator::SetGeneratorPlatform(std::string const& p,
                                              cmMakefile* mf)
 {
-  if(p.empty())
-    {
+  if (p.empty()) {
     return true;
-    }
-  else
-    {
-    std::ostringstream e;
-    e <<
-      "Generator\n"
-      "  " << this->GetName() << "\n"
-      "does not support platform specification, but platform\n"
-      "  " << p << "\n"
-      "was specified.";
-    mf->IssueMessage(cmake::FATAL_ERROR, e.str());
-    return false;
-    }
+  }
+
+  std::ostringstream e;
+  /* clang-format off */
+  e <<
+    "Generator\n"
+    "  " << this->GetName() << "\n"
+    "does not support platform specification, but platform\n"
+    "  " << p << "\n"
+    "was specified.";
+  /* clang-format on */
+  mf->IssueMessage(cmake::FATAL_ERROR, e.str());
+  return false;
 }
 
 bool cmGlobalGenerator::SetGeneratorToolset(std::string const& ts,
                                             cmMakefile* mf)
 {
-  if(ts.empty())
-    {
+  if (ts.empty()) {
     return true;
-    }
-  else
-    {
-    std::ostringstream e;
-    e <<
-      "Generator\n"
-      "  " << this->GetName() << "\n"
-      "does not support toolset specification, but toolset\n"
-      "  " << ts << "\n"
-      "was specified.";
-    mf->IssueMessage(cmake::FATAL_ERROR, e.str());
-    return false;
-    }
+  }
+  std::ostringstream e;
+  /* clang-format off */
+  e <<
+    "Generator\n"
+    "  " << this->GetName() << "\n"
+    "does not support toolset specification, but toolset\n"
+    "  " << ts << "\n"
+    "was specified.";
+  /* clang-format on */
+  mf->IssueMessage(cmake::FATAL_ERROR, e.str());
+  return false;
 }
 
 std::string cmGlobalGenerator::SelectMakeProgram(
-                                          const std::string& inMakeProgram,
-                                          const std::string& makeDefault) const
+  const std::string& inMakeProgram, const std::string& makeDefault) const
 {
   std::string makeProgram = inMakeProgram;
-  if(cmSystemTools::IsOff(makeProgram.c_str()))
-    {
+  if (cmSystemTools::IsOff(makeProgram.c_str())) {
     const char* makeProgramCSTR =
       this->CMakeInstance->GetCacheDefinition("CMAKE_MAKE_PROGRAM");
-    if(cmSystemTools::IsOff(makeProgramCSTR))
-      {
+    if (cmSystemTools::IsOff(makeProgramCSTR)) {
       makeProgram = makeDefault;
-      }
-    else
-      {
+    } else {
       makeProgram = makeProgramCSTR;
-      }
-    if(cmSystemTools::IsOff(makeProgram.c_str()) &&
-       !makeProgram.empty())
-      {
-      makeProgram = "CMAKE_MAKE_PROGRAM-NOTFOUND";
-      }
     }
+    if (cmSystemTools::IsOff(makeProgram.c_str()) && !makeProgram.empty()) {
+      makeProgram = "CMAKE_MAKE_PROGRAM-NOTFOUND";
+    }
+  }
   return makeProgram;
 }
 
-void cmGlobalGenerator::ResolveLanguageCompiler(const std::string &lang,
-                                                cmMakefile *mf,
+void cmGlobalGenerator::ResolveLanguageCompiler(const std::string& lang,
+                                                cmMakefile* mf,
                                                 bool optional) const
 {
   std::string langComp = "CMAKE_";
   langComp += lang;
   langComp += "_COMPILER";
 
-  if(!mf->GetDefinition(langComp))
-    {
-    if(!optional)
-      {
-      cmSystemTools::Error(langComp.c_str(),
-                           " not set, after EnableLanguage");
-      }
-    return;
+  if (!mf->GetDefinition(langComp)) {
+    if (!optional) {
+      cmSystemTools::Error(langComp.c_str(), " not set, after EnableLanguage");
     }
+    return;
+  }
   const char* name = mf->GetRequiredDefinition(langComp);
   std::string path;
-  if(!cmSystemTools::FileIsFullPath(name))
-    {
+  if (!cmSystemTools::FileIsFullPath(name)) {
     path = cmSystemTools::FindProgram(name);
-    }
-  else
-    {
+  } else {
     path = name;
-    }
-  if((path.empty() || !cmSystemTools::FileExists(path.c_str()))
-      && (optional==false))
-    {
+  }
+  if (!optional && (path.empty() || !cmSystemTools::FileExists(path))) {
     return;
-    }
-  const char* cname = this->GetCMakeInstance()->
-    GetCacheManager()->GetCacheValue(langComp);
+  }
+  const char* cname =
+    this->GetCMakeInstance()->GetState()->GetInitializedCacheValue(langComp);
   std::string changeVars;
-  if(cname && !optional)
-    {
+  if (cname && !optional) {
     std::string cnameString;
-    if(!cmSystemTools::FileIsFullPath(cname))
-      {
+    if (!cmSystemTools::FileIsFullPath(cname)) {
       cnameString = cmSystemTools::FindProgram(cname);
-      }
-    else
-      {
+    } else {
       cnameString = cname;
-      }
+    }
     std::string pathString = path;
     // get rid of potentially multiple slashes:
     cmSystemTools::ConvertToUnixSlashes(cnameString);
     cmSystemTools::ConvertToUnixSlashes(pathString);
-    if (cnameString != pathString)
-      {
+    if (cnameString != pathString) {
       const char* cvars =
-        this->GetCMakeInstance()->GetProperty(
+        this->GetCMakeInstance()->GetState()->GetGlobalProperty(
           "__CMAKE_DELETE_CACHE_CHANGE_VARS_");
-      if(cvars)
-        {
+      if (cvars) {
         changeVars += cvars;
         changeVars += ";";
-        }
+      }
       changeVars += langComp;
       changeVars += ";";
       changeVars += cname;
-      this->GetCMakeInstance()->SetProperty(
-        "__CMAKE_DELETE_CACHE_CHANGE_VARS_",
-        changeVars.c_str());
-      }
+      this->GetCMakeInstance()->GetState()->SetGlobalProperty(
+        "__CMAKE_DELETE_CACHE_CHANGE_VARS_", changeVars.c_str());
     }
+  }
 }
 
 void cmGlobalGenerator::AddBuildExportSet(cmExportBuildFileGenerator* gen)
@@ -221,97 +229,103 @@ void cmGlobalGenerator::AddBuildExportSet(cmExportBuildFileGenerator* gen)
   this->BuildExportSets[gen->GetMainExportFileName()] = gen;
 }
 
-void
-cmGlobalGenerator::AddBuildExportExportSet(cmExportBuildFileGenerator* gen)
+void cmGlobalGenerator::AddBuildExportExportSet(
+  cmExportBuildFileGenerator* gen)
 {
   this->BuildExportSets[gen->GetMainExportFileName()] = gen;
   this->BuildExportExportSets[gen->GetMainExportFileName()] = gen;
 }
 
-bool cmGlobalGenerator::GenerateImportFile(const std::string &file)
+bool cmGlobalGenerator::GenerateImportFile(const std::string& file)
 {
-  std::map<std::string, cmExportBuildFileGenerator*>::iterator it
-                                          = this->BuildExportSets.find(file);
-  if (it != this->BuildExportSets.end())
-    {
+  std::map<std::string, cmExportBuildFileGenerator*>::iterator it =
+    this->BuildExportSets.find(file);
+  if (it != this->BuildExportSets.end()) {
     bool result = it->second->GenerateImportFile();
+
+    if (!this->ConfigureDoneCMP0026AndCMP0024) {
+      for (std::vector<cmMakefile*>::const_iterator mit =
+             this->Makefiles.begin();
+           mit != this->Makefiles.end(); ++mit) {
+        (*mit)->RemoveExportBuildFileGeneratorCMP0024(it->second);
+      }
+    }
+
     delete it->second;
-    it->second = 0;
+    it->second = CM_NULLPTR;
     this->BuildExportSets.erase(it);
     return result;
-    }
+  }
   return false;
 }
 
 void cmGlobalGenerator::ForceLinkerLanguages()
 {
-
 }
 
-bool
-cmGlobalGenerator::IsExportedTargetsFile(const std::string &filename) const
+bool cmGlobalGenerator::IsExportedTargetsFile(
+  const std::string& filename) const
 {
-  const std::map<std::string, cmExportBuildFileGenerator*>::const_iterator it
-                                      = this->BuildExportSets.find(filename);
-  if (it == this->BuildExportSets.end())
-    {
+  const std::map<std::string, cmExportBuildFileGenerator*>::const_iterator it =
+    this->BuildExportSets.find(filename);
+  if (it == this->BuildExportSets.end()) {
     return false;
-    }
-  return this->BuildExportExportSets.find(filename)
-                                        == this->BuildExportExportSets.end();
+  }
+  return this->BuildExportExportSets.find(filename) ==
+    this->BuildExportExportSets.end();
 }
 
 // Find the make program for the generator, required for try compiles
-void cmGlobalGenerator::FindMakeProgram(cmMakefile* mf)
+bool cmGlobalGenerator::FindMakeProgram(cmMakefile* mf)
 {
-  if(this->FindMakeProgramFile.empty())
-    {
+  if (this->FindMakeProgramFile.empty()) {
     cmSystemTools::Error(
       "Generator implementation error, "
       "all generators must specify this->FindMakeProgramFile");
-    }
-  if(!mf->GetDefinition("CMAKE_MAKE_PROGRAM")
-     || cmSystemTools::IsOff(mf->GetDefinition("CMAKE_MAKE_PROGRAM")))
-    {
+    return false;
+  }
+  if (!mf->GetDefinition("CMAKE_MAKE_PROGRAM") ||
+      cmSystemTools::IsOff(mf->GetDefinition("CMAKE_MAKE_PROGRAM"))) {
     std::string setMakeProgram =
       mf->GetModulesFile(this->FindMakeProgramFile.c_str());
-    if(!setMakeProgram.empty())
-      {
-      mf->ReadListFile(0, setMakeProgram.c_str());
-      }
+    if (!setMakeProgram.empty()) {
+      mf->ReadListFile(setMakeProgram.c_str());
     }
-  if(!mf->GetDefinition("CMAKE_MAKE_PROGRAM")
-     || cmSystemTools::IsOff(mf->GetDefinition("CMAKE_MAKE_PROGRAM")))
-    {
+  }
+  if (!mf->GetDefinition("CMAKE_MAKE_PROGRAM") ||
+      cmSystemTools::IsOff(mf->GetDefinition("CMAKE_MAKE_PROGRAM"))) {
     std::ostringstream err;
     err << "CMake was unable to find a build program corresponding to \""
         << this->GetName() << "\".  CMAKE_MAKE_PROGRAM is not set.  You "
         << "probably need to select a different build tool.";
     cmSystemTools::Error(err.str().c_str());
     cmSystemTools::SetFatalErrorOccured();
-    return;
-    }
+    return false;
+  }
   std::string makeProgram = mf->GetRequiredDefinition("CMAKE_MAKE_PROGRAM");
   // if there are spaces in the make program use short path
   // but do not short path the actual program name, as
   // this can cause trouble with VSExpress
-  if(makeProgram.find(' ') != makeProgram.npos)
-    {
+  if (makeProgram.find(' ') != std::string::npos) {
     std::string dir;
     std::string file;
-    cmSystemTools::SplitProgramPath(makeProgram,
-                                    dir, file);
+    cmSystemTools::SplitProgramPath(makeProgram, dir, file);
     std::string saveFile = file;
     cmSystemTools::GetShortPath(makeProgram, makeProgram);
-    cmSystemTools::SplitProgramPath(makeProgram,
-                                    dir, file);
+    cmSystemTools::SplitProgramPath(makeProgram, dir, file);
     makeProgram = dir;
     makeProgram += "/";
     makeProgram += saveFile;
     mf->AddCacheDefinition("CMAKE_MAKE_PROGRAM", makeProgram.c_str(),
-                           "make program",
-                           cmCacheManager::FILEPATH);
-    }
+                           "make program", cmStateEnums::FILEPATH);
+  }
+  return true;
+}
+
+bool cmGlobalGenerator::CheckLanguages(
+  std::vector<std::string> const& /* languages */, cmMakefile* /* mf */) const
+{
+  return true;
 }
 
 // enable the given language
@@ -359,147 +373,168 @@ void cmGlobalGenerator::FindMakeProgram(cmMakefile* mf)
 //
 //
 
-void
-cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
-                                  cmMakefile *mf, bool optional)
+void cmGlobalGenerator::EnableLanguage(
+  std::vector<std::string> const& languages, cmMakefile* mf, bool optional)
 {
-  if(languages.empty())
-    {
+  if (languages.empty()) {
     cmSystemTools::Error("EnableLanguage must have a lang specified!");
     cmSystemTools::SetFatalErrorOccured();
     return;
-    }
+  }
 
-  if(this->TryCompileOuterMakefile)
-    {
+  std::set<std::string> cur_languages(languages.begin(), languages.end());
+  for (std::set<std::string>::iterator li = cur_languages.begin();
+       li != cur_languages.end(); ++li) {
+    if (!this->LanguagesInProgress.insert(*li).second) {
+      std::ostringstream e;
+      e << "Language '" << *li << "' is currently being enabled.  "
+                                  "Recursive call not allowed.";
+      mf->IssueMessage(cmake::FATAL_ERROR, e.str());
+      cmSystemTools::SetFatalErrorOccured();
+      return;
+    }
+  }
+
+  if (this->TryCompileOuterMakefile) {
     // In a try-compile we can only enable languages provided by caller.
-    for(std::vector<std::string>::const_iterator li = languages.begin();
-        li != languages.end(); ++li)
-      {
-      if(*li == "NONE")
-        {
+    for (std::vector<std::string>::const_iterator li = languages.begin();
+         li != languages.end(); ++li) {
+      if (*li == "NONE") {
         this->SetLanguageEnabled("NONE", mf);
-        }
-      else
-        {
+      } else {
         const char* lang = li->c_str();
-        if(this->LanguagesReady.find(lang) == this->LanguagesReady.end())
-          {
+        if (this->LanguagesReady.find(lang) == this->LanguagesReady.end()) {
           std::ostringstream e;
-          e << "The test project needs language "
-            << lang << " which is not enabled.";
-          this->TryCompileOuterMakefile
-            ->IssueMessage(cmake::FATAL_ERROR, e.str());
+          e << "The test project needs language " << lang
+            << " which is not enabled.";
+          this->TryCompileOuterMakefile->IssueMessage(cmake::FATAL_ERROR,
+                                                      e.str());
           cmSystemTools::SetFatalErrorOccured();
           return;
-          }
         }
       }
     }
+  }
 
   bool fatalError = false;
 
   mf->AddDefinition("RUN_CONFIGURE", true);
-  std::string rootBin = mf->GetHomeOutputDirectory();
+  std::string rootBin = this->CMakeInstance->GetHomeOutputDirectory();
   rootBin += cmake::GetCMakeFilesDirectory();
 
   // If the configuration files path has been set,
   // then we are in a try compile and need to copy the enable language
   // files from the parent cmake bin dir, into the try compile bin dir
-  if(!this->ConfiguredFilesPath.empty())
-    {
+  if (!this->ConfiguredFilesPath.empty()) {
     rootBin = this->ConfiguredFilesPath;
-    }
+  }
   rootBin += "/";
   rootBin += cmVersion::GetCMakeVersion();
 
   // set the dir for parent files so they can be used by modules
-  mf->AddDefinition("CMAKE_PLATFORM_INFO_DIR",rootBin.c_str());
+  mf->AddDefinition("CMAKE_PLATFORM_INFO_DIR", rootBin.c_str());
+
+  if (!this->CMakeInstance->GetIsInTryCompile()) {
+    // Keep a mark in the cache to indicate that we've initialized the
+    // platform information directory.  If the platform information
+    // directory exists but the mark is missing then CMakeCache.txt
+    // has been removed or replaced without also removing the CMakeFiles/
+    // directory.  In this case remove the platform information directory
+    // so that it will be re-initialized and the relevant information
+    // restored in the cache.
+    if (cmSystemTools::FileIsDirectory(rootBin) &&
+        !mf->IsOn(kCMAKE_PLATFORM_INFO_INITIALIZED)) {
+      cmSystemTools::RemoveADirectory(rootBin);
+    }
+    this->GetCMakeInstance()->AddCacheEntry(
+      kCMAKE_PLATFORM_INFO_INITIALIZED, "1",
+      "Platform information initialized", cmStateEnums::INTERNAL);
+  }
 
   // find and make sure CMAKE_MAKE_PROGRAM is defined
-  this->FindMakeProgram(mf);
+  if (!this->FindMakeProgram(mf)) {
+    return;
+  }
+
+  if (!this->CheckLanguages(languages, mf)) {
+    return;
+  }
 
   // try and load the CMakeSystem.cmake if it is there
   std::string fpath = rootBin;
   bool const readCMakeSystem = !mf->GetDefinition("CMAKE_SYSTEM_LOADED");
-  if(readCMakeSystem)
-    {
+  if (readCMakeSystem) {
     fpath += "/CMakeSystem.cmake";
-    if(cmSystemTools::FileExists(fpath.c_str()))
-      {
-      mf->ReadListFile(0,fpath.c_str());
-      }
+    if (cmSystemTools::FileExists(fpath.c_str())) {
+      mf->ReadListFile(fpath.c_str());
     }
+  }
   //  Load the CMakeDetermineSystem.cmake file and find out
   // what platform we are running on
-  if (!mf->GetDefinition("CMAKE_SYSTEM"))
-    {
+  if (!mf->GetDefinition("CMAKE_SYSTEM")) {
 #if defined(_WIN32) && !defined(__CYGWIN__)
     /* Windows version number data.  */
-    OSVERSIONINFO osvi;
-    ZeroMemory(&osvi, sizeof(osvi));
-    osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
+    OSVERSIONINFOEXW osviex;
+    ZeroMemory(&osviex, sizeof(osviex));
+    osviex.dwOSVersionInfoSize = sizeof(osviex);
+
 #ifdef KWSYS_WINDOWS_DEPRECATED_GetVersionEx
-# pragma warning (push)
-# pragma warning (disable:4996)
+#pragma warning(push)
+#pragma warning(disable : 4996)
 #endif
-    GetVersionEx (&osvi);
+    GetVersionExW((OSVERSIONINFOW*)&osviex);
 #ifdef KWSYS_WINDOWS_DEPRECATED_GetVersionEx
-# pragma warning (pop)
+#pragma warning(pop)
 #endif
     std::ostringstream windowsVersionString;
-    windowsVersionString << osvi.dwMajorVersion << "." << osvi.dwMinorVersion;
+    windowsVersionString << osviex.dwMajorVersion << "."
+                         << osviex.dwMinorVersion << "."
+                         << osviex.dwBuildNumber;
     windowsVersionString.str();
     mf->AddDefinition("CMAKE_HOST_SYSTEM_VERSION",
                       windowsVersionString.str().c_str());
 #endif
     // Read the DetermineSystem file
     std::string systemFile = mf->GetModulesFile("CMakeDetermineSystem.cmake");
-    mf->ReadListFile(0, systemFile.c_str());
+    mf->ReadListFile(systemFile.c_str());
     // load the CMakeSystem.cmake from the binary directory
     // this file is configured by the CMakeDetermineSystem.cmake file
     fpath = rootBin;
     fpath += "/CMakeSystem.cmake";
-    mf->ReadListFile(0,fpath.c_str());
-    }
+    mf->ReadListFile(fpath.c_str());
+  }
 
-  if(readCMakeSystem)
-    {
+  if (readCMakeSystem) {
     // Tell the generator about the target system.
     std::string system = mf->GetSafeDefinition("CMAKE_SYSTEM_NAME");
-    if(!this->SetSystemName(system, mf))
-      {
+    if (!this->SetSystemName(system, mf)) {
       cmSystemTools::SetFatalErrorOccured();
       return;
-      }
+    }
 
     // Tell the generator about the platform, if any.
     std::string platform = mf->GetSafeDefinition("CMAKE_GENERATOR_PLATFORM");
-    if(!this->SetGeneratorPlatform(platform, mf))
-      {
+    if (!this->SetGeneratorPlatform(platform, mf)) {
       cmSystemTools::SetFatalErrorOccured();
       return;
-      }
+    }
 
     // Tell the generator about the toolset, if any.
     std::string toolset = mf->GetSafeDefinition("CMAKE_GENERATOR_TOOLSET");
-    if(!this->SetGeneratorToolset(toolset, mf))
-      {
+    if (!this->SetGeneratorToolset(toolset, mf)) {
       cmSystemTools::SetFatalErrorOccured();
       return;
-      }
     }
+  }
 
   // **** Load the system specific initialization if not yet loaded
-  if (!mf->GetDefinition("CMAKE_SYSTEM_SPECIFIC_INITIALIZE_LOADED"))
-    {
+  if (!mf->GetDefinition("CMAKE_SYSTEM_SPECIFIC_INITIALIZE_LOADED")) {
     fpath = mf->GetModulesFile("CMakeSystemSpecificInitialize.cmake");
-    if(!mf->ReadListFile(0,fpath.c_str()))
-      {
+    if (!mf->ReadListFile(fpath.c_str())) {
       cmSystemTools::Error("Could not find cmake module file: "
                            "CMakeSystemSpecificInitialize.cmake");
-      }
     }
+  }
 
   std::map<std::string, bool> needTestLanguage;
   std::map<std::string, bool> needSetLanguageEnabledMaps;
@@ -507,21 +542,18 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
   // load the CMakeDetermine(LANG)Compiler.cmake file to find
   // the compiler
 
-  for(std::vector<std::string>::const_iterator l = languages.begin();
-      l != languages.end(); ++l)
-    {
+  for (std::vector<std::string>::const_iterator l = languages.begin();
+       l != languages.end(); ++l) {
     const char* lang = l->c_str();
     needSetLanguageEnabledMaps[lang] = false;
-    if(*l == "NONE")
-      {
+    if (*l == "NONE") {
       this->SetLanguageEnabled("NONE", mf);
       continue;
-      }
+    }
     std::string loadedLang = "CMAKE_";
-    loadedLang +=  lang;
+    loadedLang += lang;
     loadedLang += "_COMPILER_LOADED";
-    if(!mf->GetDefinition(loadedLang))
-      {
+    if (!mf->GetDefinition(loadedLang)) {
       fpath = rootBin;
       fpath += "/CMake";
       fpath += lang;
@@ -530,31 +562,27 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
       // If the existing build tree was already configured with this
       // version of CMake then try to load the configured file first
       // to avoid duplicate compiler tests.
-      if(cmSystemTools::FileExists(fpath.c_str()))
-        {
-        if(!mf->ReadListFile(0,fpath.c_str()))
-          {
+      if (cmSystemTools::FileExists(fpath.c_str())) {
+        if (!mf->ReadListFile(fpath.c_str())) {
           cmSystemTools::Error("Could not find cmake module file: ",
                                fpath.c_str());
-          }
+        }
         // if this file was found then the language was already determined
         // to be working
         needTestLanguage[lang] = false;
         this->SetLanguageEnabledFlag(lang, mf);
         needSetLanguageEnabledMaps[lang] = true;
         // this can only be called after loading CMake(LANG)Compiler.cmake
-        }
       }
+    }
 
-    if(!this->GetLanguageEnabled(lang) )
-      {
-      if (this->CMakeInstance->GetIsInTryCompile())
-        {
+    if (!this->GetLanguageEnabled(lang)) {
+      if (this->CMakeInstance->GetIsInTryCompile()) {
         cmSystemTools::Error("This should not have happened. "
                              "If you see this message, you are probably "
                              "using a broken CMakeLists.txt file or a "
                              "problematic release of CMake");
-        }
+      }
       // if the CMake(LANG)Compiler.cmake file was not found then
       // load CMakeDetermine(LANG)Compiler.cmake
       std::string determineCompiler = "CMakeDetermine";
@@ -562,16 +590,17 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
       determineCompiler += "Compiler.cmake";
       std::string determineFile =
         mf->GetModulesFile(determineCompiler.c_str());
-      if(!mf->ReadListFile(0,determineFile.c_str()))
-        {
+      if (!mf->ReadListFile(determineFile.c_str())) {
         cmSystemTools::Error("Could not find cmake module file: ",
                              determineCompiler.c_str());
-        }
+      }
+      if (cmSystemTools::GetFatalErrorOccured()) {
+        return;
+      }
       needTestLanguage[lang] = true;
       // Some generators like visual studio should not use the env variables
       // So the global generator can specify that in this variable
-      if(!mf->GetDefinition("CMAKE_GENERATOR_NO_COMPILER_ENV"))
-        {
+      if (!mf->GetDefinition("CMAKE_GENERATOR_NO_COMPILER_ENV")) {
         // put ${CMake_(LANG)_COMPILER_ENV_VAR}=${CMAKE_(LANG)_COMPILER
         // into the environment, in case user scripts want to run
         // configure, or sub cmakes
@@ -582,13 +611,12 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
         compilerEnv += lang;
         compilerEnv += "_COMPILER_ENV_VAR";
         std::string envVar = mf->GetRequiredDefinition(compilerEnv);
-        std::string envVarValue =
-          mf->GetRequiredDefinition(compilerName);
+        std::string envVarValue = mf->GetRequiredDefinition(compilerName);
         std::string env = envVar;
         env += "=";
         env += envVarValue;
         cmSystemTools::PutEnv(env);
-        }
+      }
 
       // if determineLanguage was called then load the file it
       // configures CMake(LANG)Compiler.cmake
@@ -596,11 +624,10 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
       fpath += "/CMake";
       fpath += lang;
       fpath += "Compiler.cmake";
-      if(!mf->ReadListFile(0,fpath.c_str()))
-        {
+      if (!mf->ReadListFile(fpath.c_str())) {
         cmSystemTools::Error("Could not find cmake module file: ",
                              fpath.c_str());
-        }
+      }
       this->SetLanguageEnabledFlag(lang, mf);
       needSetLanguageEnabledMaps[lang] = true;
       // this can only be called after loading CMake(LANG)Compiler.cmake
@@ -608,30 +635,26 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
       // not know if it is a working compiler yet so set the test language
       // flag
       needTestLanguage[lang] = true;
-      } // end if(!this->GetLanguageEnabled(lang) )
-    }  // end loop over languages
+    } // end if(!this->GetLanguageEnabled(lang) )
+  }   // end loop over languages
 
   // **** Load the system specific information if not yet loaded
-  if (!mf->GetDefinition("CMAKE_SYSTEM_SPECIFIC_INFORMATION_LOADED"))
-    {
+  if (!mf->GetDefinition("CMAKE_SYSTEM_SPECIFIC_INFORMATION_LOADED")) {
     fpath = mf->GetModulesFile("CMakeSystemSpecificInformation.cmake");
-    if(!mf->ReadListFile(0,fpath.c_str()))
-      {
+    if (!mf->ReadListFile(fpath.c_str())) {
       cmSystemTools::Error("Could not find cmake module file: "
                            "CMakeSystemSpecificInformation.cmake");
-      }
     }
+  }
   // loop over languages again loading CMake(LANG)Information.cmake
   //
-  for(std::vector<std::string>::const_iterator l = languages.begin();
-      l != languages.end(); ++l)
-    {
+  for (std::vector<std::string>::const_iterator l = languages.begin();
+       l != languages.end(); ++l) {
     const char* lang = l->c_str();
-    if(*l == "NONE")
-      {
+    if (*l == "NONE") {
       this->SetLanguageEnabled("NONE", mf);
       continue;
-      }
+    }
 
     // Check that the compiler was found.
     std::string compilerName = "CMAKE_";
@@ -642,39 +665,36 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
     compilerEnv += "_COMPILER_ENV_VAR";
     std::ostringstream noCompiler;
     const char* compilerFile = mf->GetDefinition(compilerName);
-    if(!compilerFile || !*compilerFile ||
-       cmSystemTools::IsNOTFOUND(compilerFile))
-      {
+    if (!compilerFile || !*compilerFile ||
+        cmSystemTools::IsNOTFOUND(compilerFile)) {
+      /* clang-format off */
       noCompiler <<
         "No " << compilerName << " could be found.\n"
         ;
-      }
-    else if(strcmp(lang, "RC") != 0 &&
-            strcmp(lang, "ASM_MASM") != 0)
-      {
-      if(!cmSystemTools::FileIsFullPath(compilerFile))
-        {
+      /* clang-format on */
+    } else if (strcmp(lang, "RC") != 0 && strcmp(lang, "ASM_MASM") != 0) {
+      if (!cmSystemTools::FileIsFullPath(compilerFile)) {
+        /* clang-format off */
         noCompiler <<
           "The " << compilerName << ":\n"
           "  " << compilerFile << "\n"
           "is not a full path and was not found in the PATH.\n"
           ;
-        }
-      else if(!cmSystemTools::FileExists(compilerFile))
-        {
+        /* clang-format on */
+      } else if (!cmSystemTools::FileExists(compilerFile)) {
+        /* clang-format off */
         noCompiler <<
           "The " << compilerName << ":\n"
           "  " << compilerFile << "\n"
           "is not a full path to an existing compiler tool.\n"
           ;
-        }
+        /* clang-format on */
       }
-    if(!noCompiler.str().empty())
-      {
+    }
+    if (!noCompiler.str().empty()) {
       // Skip testing this language since the compiler is not found.
       needTestLanguage[lang] = false;
-      if(!optional)
-        {
+      if (!optional) {
         // The compiler was not found and it is not optional.  Remove
         // CMake(LANG)Compiler.cmake so we try again next time CMake runs.
         std::string compilerLangFile = rootBin;
@@ -682,40 +702,34 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
         compilerLangFile += lang;
         compilerLangFile += "Compiler.cmake";
         cmSystemTools::RemoveFile(compilerLangFile);
-        if(!this->CMakeInstance->GetIsInTryCompile())
-          {
+        if (!this->CMakeInstance->GetIsInTryCompile()) {
           this->PrintCompilerAdvice(noCompiler, lang,
                                     mf->GetDefinition(compilerEnv));
           mf->IssueMessage(cmake::FATAL_ERROR, noCompiler.str());
           fatalError = true;
-          }
         }
       }
+    }
 
     std::string langLoadedVar = "CMAKE_";
     langLoadedVar += lang;
     langLoadedVar += "_INFORMATION_LOADED";
-    if (!mf->GetDefinition(langLoadedVar))
-      {
+    if (!mf->GetDefinition(langLoadedVar)) {
       fpath = "CMake";
-      fpath +=  lang;
+      fpath += lang;
       fpath += "Information.cmake";
       std::string informationFile = mf->GetModulesFile(fpath.c_str());
-      if (informationFile.empty())
-        {
+      if (informationFile.empty()) {
         cmSystemTools::Error("Could not find cmake module file: ",
                              fpath.c_str());
-        }
-      else if(!mf->ReadListFile(0, informationFile.c_str()))
-        {
+      } else if (!mf->ReadListFile(informationFile.c_str())) {
         cmSystemTools::Error("Could not process cmake module file: ",
                              informationFile.c_str());
-        }
       }
-    if (needSetLanguageEnabledMaps[lang])
-      {
+    }
+    if (needSetLanguageEnabledMaps[lang]) {
       this->SetLanguageEnabledMaps(lang, mf);
-      }
+    }
     this->LanguagesReady.insert(lang);
 
     // Test the compiler for the language just setup
@@ -723,122 +737,108 @@ cmGlobalGenerator::EnableLanguage(std::vector<std::string>const& languages,
     // At this point we should have enough info for a try compile
     // which is used in the backward stuff
     // If the language is untested then test it now with a try compile.
-    if(needTestLanguage[lang])
-      {
-      if (!this->CMakeInstance->GetIsInTryCompile())
-        {
+    if (needTestLanguage[lang]) {
+      if (!this->CMakeInstance->GetIsInTryCompile()) {
         std::string testLang = "CMakeTest";
         testLang += lang;
         testLang += "Compiler.cmake";
         std::string ifpath = mf->GetModulesFile(testLang.c_str());
-        if(!mf->ReadListFile(0,ifpath.c_str()))
-          {
+        if (!mf->ReadListFile(ifpath.c_str())) {
           cmSystemTools::Error("Could not find cmake module file: ",
                                testLang.c_str());
-          }
+        }
         std::string compilerWorks = "CMAKE_";
         compilerWorks += lang;
         compilerWorks += "_COMPILER_WORKS";
         // if the compiler did not work, then remove the
         // CMake(LANG)Compiler.cmake file so that it will get tested the
         // next time cmake is run
-        if(!mf->IsOn(compilerWorks))
-          {
+        if (!mf->IsOn(compilerWorks)) {
           std::string compilerLangFile = rootBin;
           compilerLangFile += "/CMake";
           compilerLangFile += lang;
           compilerLangFile += "Compiler.cmake";
           cmSystemTools::RemoveFile(compilerLangFile);
-          }
-        } // end if in try compile
-      } // end need test language
+        }
+      } // end if in try compile
+    }   // end need test language
     // Store the shared library flags so that we can satisfy CMP0018
     std::string sharedLibFlagsVar = "CMAKE_SHARED_LIBRARY_";
     sharedLibFlagsVar += lang;
     sharedLibFlagsVar += "_FLAGS";
-    const char* sharedLibFlags =
-      mf->GetSafeDefinition(sharedLibFlagsVar);
-    if (sharedLibFlags)
-      {
+    const char* sharedLibFlags = mf->GetSafeDefinition(sharedLibFlagsVar);
+    if (sharedLibFlags) {
       this->LanguageToOriginalSharedLibFlags[lang] = sharedLibFlags;
-      }
+    }
 
     // Translate compiler ids for compatibility.
     this->CheckCompilerIdCompatibility(mf, lang);
-    } // end for each language
+  } // end for each language
 
   // Now load files that can override any settings on the platform or for
   // the project First load the project compatibility file if it is in
   // cmake
-  std::string projectCompatibility = mf->GetDefinition("CMAKE_ROOT");
+  std::string projectCompatibility = cmSystemTools::GetCMakeRoot();
   projectCompatibility += "/Modules/";
   projectCompatibility += mf->GetSafeDefinition("PROJECT_NAME");
   projectCompatibility += "Compatibility.cmake";
-  if(cmSystemTools::FileExists(projectCompatibility.c_str()))
-    {
-    mf->ReadListFile(0,projectCompatibility.c_str());
-    }
+  if (cmSystemTools::FileExists(projectCompatibility.c_str())) {
+    mf->ReadListFile(projectCompatibility.c_str());
+  }
   // Inform any extra generator of the new language.
-  if (this->ExtraGenerator)
-    {
+  if (this->ExtraGenerator) {
     this->ExtraGenerator->EnableLanguage(languages, mf, false);
-    }
+  }
 
-  if(fatalError)
-    {
+  if (fatalError) {
     cmSystemTools::SetFatalErrorOccured();
-    }
+  }
+
+  for (std::set<std::string>::iterator li = cur_languages.begin();
+       li != cur_languages.end(); ++li) {
+    this->LanguagesInProgress.erase(*li);
+  }
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::PrintCompilerAdvice(std::ostream& os,
                                             std::string const& lang,
                                             const char* envVar) const
 {
   // Subclasses override this method if they do not support this advice.
-  os <<
-    "Tell CMake where to find the compiler by setting "
-    ;
-  if(envVar)
-    {
-    os <<
-      "either the environment variable \"" << envVar << "\" or "
-      ;
-    }
-  os <<
-    "the CMake cache entry CMAKE_" << lang << "_COMPILER "
-    "to the full path to the compiler, or to the compiler name "
-    "if it is in the PATH."
-    ;
+  os << "Tell CMake where to find the compiler by setting ";
+  if (envVar) {
+    os << "either the environment variable \"" << envVar << "\" or ";
+  }
+  os << "the CMake cache entry CMAKE_" << lang
+     << "_COMPILER "
+        "to the full path to the compiler, or to the compiler name "
+        "if it is in the PATH.";
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::CheckCompilerIdCompatibility(cmMakefile* mf,
-                                                std::string const& lang) const
+void cmGlobalGenerator::CheckCompilerIdCompatibility(
+  cmMakefile* mf, std::string const& lang) const
 {
   std::string compilerIdVar = "CMAKE_" + lang + "_COMPILER_ID";
   const char* compilerId = mf->GetDefinition(compilerIdVar);
-  if(!compilerId)
-    {
+  if (!compilerId) {
     return;
-    }
+  }
 
-  if(strcmp(compilerId, "AppleClang") == 0)
-    {
-    cmPolicies* policies = this->CMakeInstance->GetPolicies();
-    switch(mf->GetPolicyStatus(cmPolicies::CMP0025))
-      {
+  if (strcmp(compilerId, "AppleClang") == 0) {
+    switch (mf->GetPolicyStatus(cmPolicies::CMP0025)) {
       case cmPolicies::WARN:
-        if(!this->CMakeInstance->GetIsInTryCompile() &&
-           mf->PolicyOptionalWarningEnabled("CMAKE_POLICY_WARNING_CMP0025"))
-          {
+        if (!this->CMakeInstance->GetIsInTryCompile() &&
+            mf->PolicyOptionalWarningEnabled("CMAKE_POLICY_WARNING_CMP0025")) {
           std::ostringstream w;
-          w << policies->GetPolicyWarning(cmPolicies::CMP0025) << "\n"
+          /* clang-format off */
+          w << cmPolicies::GetPolicyWarning(cmPolicies::CMP0025) << "\n"
             "Converting " << lang <<
             " compiler id \"AppleClang\" to \"Clang\" for compatibility."
             ;
+          /* clang-format on */
           mf->IssueMessage(cmake::AUTHOR_WARNING, w.str());
-          }
+        }
+        CM_FALLTHROUGH;
       case cmPolicies::OLD:
         // OLD behavior is to convert AppleClang to Clang.
         mf->AddDefinition(compilerIdVar, "Clang");
@@ -847,102 +847,87 @@ void cmGlobalGenerator::CheckCompilerIdCompatibility(cmMakefile* mf,
       case cmPolicies::REQUIRED_ALWAYS:
         mf->IssueMessage(
           cmake::FATAL_ERROR,
-          policies->GetRequiredPolicyError(cmPolicies::CMP0025)
-          );
+          cmPolicies::GetRequiredPolicyError(cmPolicies::CMP0025));
       case cmPolicies::NEW:
         // NEW behavior is to keep AppleClang.
         break;
-      }
     }
+  }
 
-  if(strcmp(compilerId, "QCC") == 0)
-    {
-    cmPolicies* policies = this->CMakeInstance->GetPolicies();
-    switch(mf->GetPolicyStatus(cmPolicies::CMP0047))
-      {
+  if (strcmp(compilerId, "QCC") == 0) {
+    switch (mf->GetPolicyStatus(cmPolicies::CMP0047)) {
       case cmPolicies::WARN:
-        if(!this->CMakeInstance->GetIsInTryCompile() &&
-           mf->PolicyOptionalWarningEnabled("CMAKE_POLICY_WARNING_CMP0047"))
-          {
+        if (!this->CMakeInstance->GetIsInTryCompile() &&
+            mf->PolicyOptionalWarningEnabled("CMAKE_POLICY_WARNING_CMP0047")) {
           std::ostringstream w;
-          w << policies->GetPolicyWarning(cmPolicies::CMP0047) << "\n"
+          /* clang-format off */
+          w << cmPolicies::GetPolicyWarning(cmPolicies::CMP0047) << "\n"
             "Converting " << lang <<
             " compiler id \"QCC\" to \"GNU\" for compatibility."
             ;
+          /* clang-format on */
           mf->IssueMessage(cmake::AUTHOR_WARNING, w.str());
-          }
+        }
+        CM_FALLTHROUGH;
       case cmPolicies::OLD:
         // OLD behavior is to convert QCC to GNU.
         mf->AddDefinition(compilerIdVar, "GNU");
-        if(lang == "C")
-          {
+        if (lang == "C") {
           mf->AddDefinition("CMAKE_COMPILER_IS_GNUCC", "1");
-          }
-        else if(lang == "CXX")
-          {
+        } else if (lang == "CXX") {
           mf->AddDefinition("CMAKE_COMPILER_IS_GNUCXX", "1");
-          }
+        }
         break;
       case cmPolicies::REQUIRED_IF_USED:
       case cmPolicies::REQUIRED_ALWAYS:
         mf->IssueMessage(
           cmake::FATAL_ERROR,
-          policies->GetRequiredPolicyError(cmPolicies::CMP0047)
-          );
+          cmPolicies::GetRequiredPolicyError(cmPolicies::CMP0047));
+        CM_FALLTHROUGH;
       case cmPolicies::NEW:
         // NEW behavior is to keep QCC.
         break;
-      }
     }
+  }
 }
 
-//----------------------------------------------------------------------------
-std::string
-cmGlobalGenerator::GetLanguageOutputExtension(cmSourceFile const& source) const
+std::string cmGlobalGenerator::GetLanguageOutputExtension(
+  cmSourceFile const& source) const
 {
   const std::string& lang = source.GetLanguage();
-  if(!lang.empty())
-    {
+  if (!lang.empty()) {
     std::map<std::string, std::string>::const_iterator it =
-                                  this->LanguageToOutputExtension.find(lang);
+      this->LanguageToOutputExtension.find(lang);
 
-    if(it != this->LanguageToOutputExtension.end())
-      {
+    if (it != this->LanguageToOutputExtension.end()) {
       return it->second;
-      }
     }
-  else
-    {
+  } else {
     // if no language is found then check to see if it is already an
     // ouput extension for some language.  In that case it should be ignored
     // and in this map, so it will not be compiled but will just be used.
     std::string const& ext = source.GetExtension();
-    if(!ext.empty())
-      {
-      if(this->OutputExtensions.count(ext))
-        {
+    if (!ext.empty()) {
+      if (this->OutputExtensions.count(ext)) {
         return ext;
-        }
       }
     }
+  }
   return "";
 }
-
 
 std::string cmGlobalGenerator::GetLanguageFromExtension(const char* ext) const
 {
   // if there is an extension and it starts with . then move past the
   // . because the extensions are not stored with a .  in the map
-  if(ext && *ext == '.')
-    {
+  if (ext && *ext == '.') {
     ++ext;
-    }
-  std::map<std::string, std::string>::const_iterator it
-                                        = this->ExtensionToLanguage.find(ext);
-  if(it != this->ExtensionToLanguage.end())
-    {
+  }
+  std::map<std::string, std::string>::const_iterator it =
+    this->ExtensionToLanguage.find(ext);
+  if (it != this->ExtensionToLanguage.end()) {
     return it->second;
-    }
+  }
   return "";
 }
 
@@ -968,7 +953,7 @@ void cmGlobalGenerator::SetLanguageEnabled(const std::string& l,
 void cmGlobalGenerator::SetLanguageEnabledFlag(const std::string& l,
                                                cmMakefile* mf)
 {
-  this->LanguageEnabled[l] = true;
+  this->CMakeInstance->GetState()->SetLanguageEnabled(l);
 
   // Fill the language-to-extension map with the current variable
   // settings to make sure it is available for the try_compile()
@@ -984,107 +969,124 @@ void cmGlobalGenerator::SetLanguageEnabledMaps(const std::string& l,
   // use LanguageToLinkerPreference to detect whether this functions has
   // run before
   if (this->LanguageToLinkerPreference.find(l) !=
-                                        this->LanguageToLinkerPreference.end())
-    {
+      this->LanguageToLinkerPreference.end()) {
     return;
-    }
+  }
 
-  std::string linkerPrefVar = std::string("CMAKE_") +
-    std::string(l) + std::string("_LINKER_PREFERENCE");
+  std::string linkerPrefVar =
+    std::string("CMAKE_") + std::string(l) + std::string("_LINKER_PREFERENCE");
   const char* linkerPref = mf->GetDefinition(linkerPrefVar);
   int preference = 0;
-  if(linkerPref)
-    {
-    if (sscanf(linkerPref, "%d", &preference)!=1)
-      {
+  if (linkerPref) {
+    if (sscanf(linkerPref, "%d", &preference) != 1) {
       // backward compatibility: before 2.6 LINKER_PREFERENCE
       // was either "None" or "Preferred", and only the first character was
       // tested. So if there is a custom language out there and it is
       // "Preferred", set its preference high
-      if (linkerPref[0]=='P')
-        {
+      if (linkerPref[0] == 'P') {
         preference = 100;
-        }
-      else
-        {
+      } else {
         preference = 0;
-        }
       }
     }
+  }
 
-  if (preference < 0)
-    {
+  if (preference < 0) {
     std::string msg = linkerPrefVar;
     msg += " is negative, adjusting it to 0";
     cmSystemTools::Message(msg.c_str(), "Warning");
     preference = 0;
-    }
+  }
 
   this->LanguageToLinkerPreference[l] = preference;
 
-  std::string outputExtensionVar = std::string("CMAKE_") +
-    std::string(l) + std::string("_OUTPUT_EXTENSION");
+  std::string outputExtensionVar =
+    std::string("CMAKE_") + std::string(l) + std::string("_OUTPUT_EXTENSION");
   const char* outputExtension = mf->GetDefinition(outputExtensionVar);
-  if(outputExtension)
-    {
+  if (outputExtension) {
     this->LanguageToOutputExtension[l] = outputExtension;
     this->OutputExtensions[outputExtension] = outputExtension;
-    if(outputExtension[0] == '.')
-      {
-      this->OutputExtensions[outputExtension+1] = outputExtension+1;
-      }
+    if (outputExtension[0] == '.') {
+      this->OutputExtensions[outputExtension + 1] = outputExtension + 1;
     }
+  }
 
   // The map was originally filled by SetLanguageEnabledFlag, but
   // since then the compiler- and platform-specific files have been
   // loaded which might have added more entries.
   this->FillExtensionToLanguageMap(l, mf);
 
-  std::string ignoreExtensionsVar = std::string("CMAKE_") +
-    std::string(l) + std::string("_IGNORE_EXTENSIONS");
+  std::string ignoreExtensionsVar =
+    std::string("CMAKE_") + std::string(l) + std::string("_IGNORE_EXTENSIONS");
   std::string ignoreExts = mf->GetSafeDefinition(ignoreExtensionsVar);
   std::vector<std::string> extensionList;
   cmSystemTools::ExpandListArgument(ignoreExts, extensionList);
-  for(std::vector<std::string>::iterator i = extensionList.begin();
-      i != extensionList.end(); ++i)
-    {
+  for (std::vector<std::string>::iterator i = extensionList.begin();
+       i != extensionList.end(); ++i) {
     this->IgnoreExtensions[*i] = true;
-    }
-
+  }
 }
 
 void cmGlobalGenerator::FillExtensionToLanguageMap(const std::string& l,
                                                    cmMakefile* mf)
 {
-  std::string extensionsVar = std::string("CMAKE_") +
-    std::string(l) + std::string("_SOURCE_FILE_EXTENSIONS");
+  std::string extensionsVar = std::string("CMAKE_") + std::string(l) +
+    std::string("_SOURCE_FILE_EXTENSIONS");
   std::string exts = mf->GetSafeDefinition(extensionsVar);
   std::vector<std::string> extensionList;
   cmSystemTools::ExpandListArgument(exts, extensionList);
-  for(std::vector<std::string>::iterator i = extensionList.begin();
-      i != extensionList.end(); ++i)
-    {
+  for (std::vector<std::string>::iterator i = extensionList.begin();
+       i != extensionList.end(); ++i) {
     this->ExtensionToLanguage[*i] = l;
-    }
+  }
+}
+
+const char* cmGlobalGenerator::GetGlobalSetting(std::string const& name) const
+{
+  assert(!this->Makefiles.empty());
+  return this->Makefiles[0]->GetDefinition(name);
+}
+
+bool cmGlobalGenerator::GlobalSettingIsOn(std::string const& name) const
+{
+  assert(!this->Makefiles.empty());
+  return this->Makefiles[0]->IsOn(name);
+}
+
+const char* cmGlobalGenerator::GetSafeGlobalSetting(
+  std::string const& name) const
+{
+  assert(!this->Makefiles.empty());
+  return this->Makefiles[0]->GetSafeDefinition(name);
 }
 
 bool cmGlobalGenerator::IgnoreFile(const char* ext) const
 {
-  if(!this->GetLanguageFromExtension(ext).empty())
-    {
+  if (!this->GetLanguageFromExtension(ext).empty()) {
     return false;
-    }
+  }
   return (this->IgnoreExtensions.count(ext) > 0);
 }
 
 bool cmGlobalGenerator::GetLanguageEnabled(const std::string& l) const
 {
-  return (this->LanguageEnabled.find(l)!= this->LanguageEnabled.end());
+  return this->CMakeInstance->GetState()->GetLanguageEnabled(l);
 }
 
 void cmGlobalGenerator::ClearEnabledLanguages()
 {
-  this->LanguageEnabled.clear();
+  return this->CMakeInstance->GetState()->ClearEnabledLanguages();
+}
+
+void cmGlobalGenerator::CreateLocalGenerators()
+{
+  cmDeleteAll(this->LocalGenerators);
+  this->LocalGenerators.clear();
+  this->LocalGenerators.reserve(this->Makefiles.size());
+  for (std::vector<cmMakefile*>::const_iterator it = this->Makefiles.begin();
+       it != this->Makefiles.end(); ++it) {
+    this->LocalGenerators.push_back(this->CreateLocalGenerator(*it));
+  }
 }
 
 void cmGlobalGenerator::Configure()
@@ -1092,88 +1094,124 @@ void cmGlobalGenerator::Configure()
   this->FirstTimeProgress = 0.0f;
   this->ClearGeneratorMembers();
 
-  // start with this directory
-  cmLocalGenerator *lg = this->CreateLocalGenerator();
-  this->LocalGenerators.push_back(lg);
+  cmStateSnapshot snapshot = this->CMakeInstance->GetCurrentSnapshot();
 
-  // set the Start directories
-  cmMakefile* mf = lg->GetMakefile();
-  lg->GetMakefile()->SetStartDirectory
-    (this->CMakeInstance->GetStartDirectory());
-  lg->GetMakefile()->SetStartOutputDirectory
-    (this->CMakeInstance->GetStartOutputDirectory());
-  lg->GetMakefile()->MakeStartDirectoriesCurrent();
+  snapshot.GetDirectory().SetCurrentSource(
+    this->CMakeInstance->GetHomeDirectory());
+  snapshot.GetDirectory().SetCurrentBinary(
+    this->CMakeInstance->GetHomeOutputDirectory());
 
-  this->BinaryDirectories.insert(mf->GetStartOutputDirectory());
+  cmMakefile* dirMf = new cmMakefile(this, snapshot);
+  this->Makefiles.push_back(dirMf);
+  this->IndexMakefile(dirMf);
+
+  this->BinaryDirectories.insert(
+    this->CMakeInstance->GetHomeOutputDirectory());
 
   // now do it
-  lg->Configure();
+  this->ConfigureDoneCMP0026AndCMP0024 = false;
+  dirMf->Configure();
+  dirMf->EnforceDirectoryLevelRules();
+
+  this->ConfigureDoneCMP0026AndCMP0024 = true;
+
+  // Put a copy of each global target in every directory.
+  std::vector<GlobalTargetInfo> globalTargets;
+  this->CreateDefaultGlobalTargets(globalTargets);
+
+  for (unsigned int i = 0; i < this->Makefiles.size(); ++i) {
+    cmMakefile* mf = this->Makefiles[i];
+    cmTargets* targets = &(mf->GetTargets());
+    for (std::vector<GlobalTargetInfo>::iterator gti = globalTargets.begin();
+         gti != globalTargets.end(); ++gti) {
+      targets->insert(
+        cmTargets::value_type(gti->Name, this->CreateGlobalTarget(*gti, mf)));
+    }
+  }
 
   // update the cache entry for the number of local generators, this is used
   // for progress
   char num[100];
-  sprintf(num,"%d",static_cast<int>(this->LocalGenerators.size()));
-  this->GetCMakeInstance()->AddCacheEntry
-    ("CMAKE_NUMBER_OF_LOCAL_GENERATORS", num,
-     "number of local generators", cmCacheManager::INTERNAL);
+  sprintf(num, "%d", static_cast<int>(this->Makefiles.size()));
+  this->GetCMakeInstance()->AddCacheEntry("CMAKE_NUMBER_OF_MAKEFILES", num,
+                                          "number of local generators",
+                                          cmStateEnums::INTERNAL);
 
   // check for link libraries and include directories containing "NOTFOUND"
   // and for infinite loops
-  this->CheckLocalGenerators();
+  this->CheckTargetProperties();
 
-  // at this point this->LocalGenerators has been filled,
-  // so create the map from project name to vector of local generators
-  this->FillProjectMap();
-
-  if ( this->CMakeInstance->GetWorkingMode() == cmake::NORMAL_MODE)
-    {
+  if (this->CMakeInstance->GetWorkingMode() == cmake::NORMAL_MODE) {
     std::ostringstream msg;
-    if(cmSystemTools::GetErrorOccuredFlag())
-      {
+    if (cmSystemTools::GetErrorOccuredFlag()) {
       msg << "Configuring incomplete, errors occurred!";
-      const char* logs[] = {"CMakeOutput.log", "CMakeError.log", 0};
-      for(const char** log = logs; *log; ++log)
-        {
+      const char* logs[] = { "CMakeOutput.log", "CMakeError.log", CM_NULLPTR };
+      for (const char** log = logs; *log; ++log) {
         std::string f = this->CMakeInstance->GetHomeOutputDirectory();
         f += this->CMakeInstance->GetCMakeFilesDirectory();
         f += "/";
         f += *log;
-        if(cmSystemTools::FileExists(f.c_str()))
-          {
+        if (cmSystemTools::FileExists(f.c_str())) {
           msg << "\nSee also \"" << f << "\".";
-          }
         }
       }
-    else
-      {
+    } else {
       msg << "Configuring done";
-      }
-    this->CMakeInstance->UpdateProgress(msg.str().c_str(), -1);
     }
+    this->CMakeInstance->UpdateProgress(msg.str().c_str(), -1);
+  }
 }
 
-cmExportBuildFileGenerator*
-cmGlobalGenerator::GetExportedTargetsFile(const std::string &filename) const
+void cmGlobalGenerator::CreateGenerationObjects(TargetTypes targetTypes)
 {
-  std::map<std::string, cmExportBuildFileGenerator*>::const_iterator it
-    = this->BuildExportSets.find(filename);
-  return it == this->BuildExportSets.end() ? 0 : it->second;
+  this->CreateLocalGenerators();
+  this->CreateGeneratorTargets(targetTypes);
+  this->ComputeBuildFileGenerators();
 }
 
-//----------------------------------------------------------------------------
+void cmGlobalGenerator::CreateImportedGenerationObjects(
+  cmMakefile* mf, const std::vector<std::string>& targets,
+  std::vector<const cmGeneratorTarget*>& exports)
+{
+  this->CreateGenerationObjects(ImportedOnly);
+  std::vector<cmMakefile*>::iterator mfit =
+    std::find(this->Makefiles.begin(), this->Makefiles.end(), mf);
+  cmLocalGenerator* lg =
+    this->LocalGenerators[std::distance(this->Makefiles.begin(), mfit)];
+  for (std::vector<std::string>::const_iterator it = targets.begin();
+       it != targets.end(); ++it) {
+    cmGeneratorTarget* gt = lg->FindGeneratorTargetToUse(*it);
+    if (gt) {
+      exports.push_back(gt);
+    }
+  }
+}
+
+cmExportBuildFileGenerator* cmGlobalGenerator::GetExportedTargetsFile(
+  const std::string& filename) const
+{
+  std::map<std::string, cmExportBuildFileGenerator*>::const_iterator it =
+    this->BuildExportSets.find(filename);
+  return it == this->BuildExportSets.end() ? CM_NULLPTR : it->second;
+}
+
 void cmGlobalGenerator::AddCMP0042WarnTarget(const std::string& target)
 {
   this->CMP0042WarnTargets.insert(target);
 }
 
+void cmGlobalGenerator::AddCMP0068WarnTarget(const std::string& target)
+{
+  this->CMP0068WarnTargets.insert(target);
+}
+
 bool cmGlobalGenerator::CheckALLOW_DUPLICATE_CUSTOM_TARGETS() const
 {
   // If the property is not enabled then okay.
-  if(!this->CMakeInstance
-     ->GetPropertyAsBool("ALLOW_DUPLICATE_CUSTOM_TARGETS"))
-    {
+  if (!this->CMakeInstance->GetState()->GetGlobalPropertyAsBool(
+        "ALLOW_DUPLICATE_CUSTOM_TARGETS")) {
     return true;
-    }
+  }
 
   // This generator does not support duplicate custom targets.
   std::ostringstream e;
@@ -1187,7 +1225,20 @@ bool cmGlobalGenerator::CheckALLOW_DUPLICATE_CUSTOM_TARGETS() const
   return false;
 }
 
-void cmGlobalGenerator::DoGenerate()
+void cmGlobalGenerator::ComputeBuildFileGenerators()
+{
+  for (unsigned int i = 0; i < this->LocalGenerators.size(); ++i) {
+    std::vector<cmExportBuildFileGenerator*> gens =
+      this->Makefiles[i]->GetExportBuildFileGenerators();
+    for (std::vector<cmExportBuildFileGenerator*>::const_iterator it =
+           gens.begin();
+         it != gens.end(); ++it) {
+      (*it)->Compute(this->LocalGenerators[i]);
+    }
+  }
+}
+
+bool cmGlobalGenerator::Compute()
 {
   // Some generators track files replaced during the Generate.
   // Start with an empty vector:
@@ -1195,472 +1246,500 @@ void cmGlobalGenerator::DoGenerate()
 
   // clear targets to issue warning CMP0042 for
   this->CMP0042WarnTargets.clear();
+  // clear targets to issue warning CMP0068 for
+  this->CMP0068WarnTargets.clear();
 
-  this->Generate();
-}
-
-void cmGlobalGenerator::Generate()
-{
   // Check whether this generator is allowed to run.
-  if(!this->CheckALLOW_DUPLICATE_CUSTOM_TARGETS())
-    {
-    return;
-    }
-
+  if (!this->CheckALLOW_DUPLICATE_CUSTOM_TARGETS()) {
+    return false;
+  }
   this->FinalizeTargetCompileInfo();
+
+  this->CreateGenerationObjects();
+
+  // at this point this->LocalGenerators has been filled,
+  // so create the map from project name to vector of local generators
+  this->FillProjectMap();
 
 #ifdef CMAKE_BUILD_WITH_CMAKE
   // Iterate through all targets and set up automoc for those which have
   // the AUTOMOC, AUTOUIC or AUTORCC property set
-  AutogensType autogens;
-  this->CreateQtAutoGeneratorsTargets(autogens);
+  std::vector<cmGeneratorTarget const*> autogenTargets =
+    this->CreateQtAutoGeneratorsTargets();
 #endif
 
-  // For each existing cmLocalGenerator
   unsigned int i;
 
-  // Put a copy of each global target in every directory.
-  cmTargets globalTargets;
-  this->CreateDefaultGlobalTargets(&globalTargets);
-  for (i = 0; i < this->LocalGenerators.size(); ++i)
-    {
-    cmMakefile* mf = this->LocalGenerators[i]->GetMakefile();
-    cmTargets* targets = &(mf->GetTargets());
-    cmTargets::iterator tit;
-    for ( tit = globalTargets.begin(); tit != globalTargets.end(); ++ tit )
-      {
-      (*targets)[tit->first] = tit->second;
-      (*targets)[tit->first].SetMakefile(mf);
-      }
-    }
-
   // Add generator specific helper commands
-  for (i = 0; i < this->LocalGenerators.size(); ++i)
-    {
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
     this->LocalGenerators[i]->AddHelperCommands();
-    }
+  }
 
-  // Create per-target generator information.
-  this->CreateGeneratorTargets();
+  // Finalize the set of compile features for each target.
+  // FIXME: This turns into calls to cmMakefile::AddRequiredTargetFeature
+  // which actually modifies the <lang>_STANDARD target property
+  // on the original cmTarget instance.  It accumulates features
+  // across all configurations.  Some refactoring is needed to
+  // compute a per-config resulta purely during generation.
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
+    if (!this->LocalGenerators[i]->ComputeTargetCompileFeatures()) {
+      return false;
+    }
+  }
 
 #ifdef CMAKE_BUILD_WITH_CMAKE
-  for (AutogensType::iterator it = autogens.begin(); it != autogens.end();
-       ++it)
-    {
-    it->first.SetupAutoGenerateTarget(it->second);
-    }
+  for (std::vector<cmGeneratorTarget const*>::iterator it =
+         autogenTargets.begin();
+       it != autogenTargets.end(); ++it) {
+    cmQtAutoGeneratorInitializer::SetupAutoGenerateTarget(*it);
+  }
 #endif
+
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
+    cmMakefile* mf = this->LocalGenerators[i]->GetMakefile();
+    std::vector<cmInstallGenerator*>& gens = mf->GetInstallGenerators();
+    for (std::vector<cmInstallGenerator*>::const_iterator git = gens.begin();
+         git != gens.end(); ++git) {
+      (*git)->Compute(this->LocalGenerators[i]);
+    }
+  }
+
+  this->AddExtraIDETargets();
 
   // Trace the dependencies, after that no custom commands should be added
   // because their dependencies might not be handled correctly
-  for (i = 0; i < this->LocalGenerators.size(); ++i)
-    {
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
     this->LocalGenerators[i]->TraceDependencies();
-    }
+  }
 
   this->ForceLinkerLanguages();
 
   // Compute the manifest of main targets generated.
-  for (i = 0; i < this->LocalGenerators.size(); ++i)
-    {
-    this->LocalGenerators[i]->GenerateTargetManifest();
-    }
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
+    this->LocalGenerators[i]->ComputeTargetManifest();
+  }
+
+  // Compute the inter-target dependencies.
+  if (!this->ComputeTargetDepends()) {
+    return false;
+  }
+
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
+    this->LocalGenerators[i]->ComputeHomeRelativeOutputPath();
+  }
+
+  return true;
+}
+
+void cmGlobalGenerator::Generate()
+{
+  // Create a map from local generator to the complete set of targets
+  // it builds by default.
+  this->InitializeProgressMarks();
 
   this->ProcessEvaluationFiles();
 
-  // Compute the inter-target dependencies.
-  if(!this->ComputeTargetDepends())
-    {
-    return;
-    }
-
-  // Create a map from local generator to the complete set of targets
-  // it builds by default.
-  this->FillLocalGeneratorToTargetMap();
-
   // Generate project files
-  for (i = 0; i < this->LocalGenerators.size(); ++i)
-    {
-    this->LocalGenerators[i]->GetMakefile()->SetGeneratingBuildSystem();
-    this->SetCurrentLocalGenerator(this->LocalGenerators[i]);
+  for (unsigned int i = 0; i < this->LocalGenerators.size(); ++i) {
+    this->SetCurrentMakefile(this->LocalGenerators[i]->GetMakefile());
     this->LocalGenerators[i]->Generate();
-    if(!this->LocalGenerators[i]->GetMakefile()->IsOn(
-      "CMAKE_SKIP_INSTALL_RULES"))
-      {
+    if (!this->LocalGenerators[i]->GetMakefile()->IsOn(
+          "CMAKE_SKIP_INSTALL_RULES")) {
       this->LocalGenerators[i]->GenerateInstallRules();
-      }
-    this->LocalGenerators[i]->GenerateTestFiles();
-    this->CMakeInstance->UpdateProgress("Generating",
-      (static_cast<float>(i)+1.0f)/
-       static_cast<float>(this->LocalGenerators.size()));
     }
-  this->SetCurrentLocalGenerator(0);
+    this->LocalGenerators[i]->GenerateTestFiles();
+    this->CMakeInstance->UpdateProgress(
+      "Generating", (static_cast<float>(i) + 1.0f) /
+        static_cast<float>(this->LocalGenerators.size()));
+  }
+  this->SetCurrentMakefile(CM_NULLPTR);
 
-  if(!this->GenerateCPackPropertiesFile())
-    {
+  if (!this->GenerateCPackPropertiesFile()) {
     this->GetCMakeInstance()->IssueMessage(
       cmake::FATAL_ERROR, "Could not write CPack properties file.");
-    }
+  }
 
-  for (std::map<std::string, cmExportBuildFileGenerator*>::iterator
-      it = this->BuildExportSets.begin(); it != this->BuildExportSets.end();
-      ++it)
-    {
-    if (!it->second->GenerateImportFile()
-        && !cmSystemTools::GetErrorOccuredFlag())
-      {
-      this->GetCMakeInstance()
-          ->IssueMessage(cmake::FATAL_ERROR, "Could not write export file.");
-      return;
+  for (std::map<std::string, cmExportBuildFileGenerator*>::iterator it =
+         this->BuildExportSets.begin();
+       it != this->BuildExportSets.end(); ++it) {
+    if (!it->second->GenerateImportFile()) {
+      if (!cmSystemTools::GetErrorOccuredFlag()) {
+        this->GetCMakeInstance()->IssueMessage(cmake::FATAL_ERROR,
+                                               "Could not write export file.");
       }
+      return;
     }
+  }
   // Update rule hashes.
   this->CheckRuleHashes();
 
   this->WriteSummary();
 
-  if (this->ExtraGenerator != 0)
-    {
+  if (this->ExtraGenerator != CM_NULLPTR) {
     this->ExtraGenerator->Generate();
-    }
+  }
 
-  if(!this->CMP0042WarnTargets.empty())
-    {
+  if (!this->CMP0042WarnTargets.empty()) {
     std::ostringstream w;
-    w <<
-      (this->GetCMakeInstance()->GetPolicies()->
-       GetPolicyWarning(cmPolicies::CMP0042)) << "\n";
+    w << cmPolicies::GetPolicyWarning(cmPolicies::CMP0042) << "\n";
     w << "MACOSX_RPATH is not specified for"
          " the following targets:\n";
-    for(std::set<std::string>::iterator
-      iter = this->CMP0042WarnTargets.begin();
-      iter != this->CMP0042WarnTargets.end();
-      ++iter)
-      {
+    for (std::set<std::string>::iterator iter =
+           this->CMP0042WarnTargets.begin();
+         iter != this->CMP0042WarnTargets.end(); ++iter) {
       w << " " << *iter << "\n";
-      }
-    this->GetCMakeInstance()->IssueMessage(cmake::AUTHOR_WARNING, w.str());
     }
+    this->GetCMakeInstance()->IssueMessage(cmake::AUTHOR_WARNING, w.str());
+  }
+
+  if (!this->CMP0068WarnTargets.empty()) {
+    std::ostringstream w;
+    /* clang-format off */
+    w <<
+      cmPolicies::GetPolicyWarning(cmPolicies::CMP0068) << "\n"
+      "For compatibility with older versions of CMake, the install_name "
+      "fields for the following targets are still affected by RPATH "
+      "settings:\n"
+      ;
+    /* clang-format on */
+    for (std::set<std::string>::iterator iter =
+           this->CMP0068WarnTargets.begin();
+         iter != this->CMP0068WarnTargets.end(); ++iter) {
+      w << " " << *iter << "\n";
+    }
+    this->GetCMakeInstance()->IssueMessage(cmake::AUTHOR_WARNING, w.str());
+  }
 
   this->CMakeInstance->UpdateProgress("Generating done", -1);
 }
 
-//----------------------------------------------------------------------------
 bool cmGlobalGenerator::ComputeTargetDepends()
 {
   cmComputeTargetDepends ctd(this);
-  if(!ctd.Compute())
-    {
+  if (!ctd.Compute()) {
     return false;
-    }
-  std::vector<cmTarget const*> const& targets = ctd.GetTargets();
-  for(std::vector<cmTarget const*>::const_iterator ti = targets.begin();
-      ti != targets.end(); ++ti)
-    {
+  }
+  std::vector<cmGeneratorTarget const*> const& targets = ctd.GetTargets();
+  for (std::vector<cmGeneratorTarget const*>::const_iterator ti =
+         targets.begin();
+       ti != targets.end(); ++ti) {
     ctd.GetTargetDirectDepends(*ti, this->TargetDependencies[*ti]);
-    }
+  }
   return true;
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::CreateQtAutoGeneratorsTargets(AutogensType &autogens)
+std::vector<const cmGeneratorTarget*>
+cmGlobalGenerator::CreateQtAutoGeneratorsTargets()
 {
+  std::vector<const cmGeneratorTarget*> autogenTargets;
+
 #ifdef CMAKE_BUILD_WITH_CMAKE
-  for(unsigned int i=0; i < this->LocalGenerators.size(); ++i)
-    {
-    cmTargets& targets =
-      this->LocalGenerators[i]->GetMakefile()->GetTargets();
-    for(cmTargets::iterator ti = targets.begin();
-        ti != targets.end(); ++ti)
-      {
-      cmTarget& target = ti->second;
-      if(target.GetType() == cmTarget::EXECUTABLE ||
-         target.GetType() == cmTarget::STATIC_LIBRARY ||
-         target.GetType() == cmTarget::SHARED_LIBRARY ||
-         target.GetType() == cmTarget::MODULE_LIBRARY ||
-         target.GetType() == cmTarget::OBJECT_LIBRARY)
-        {
-        if((target.GetPropertyAsBool("AUTOMOC")
-              || target.GetPropertyAsBool("AUTOUIC")
-              || target.GetPropertyAsBool("AUTORCC"))
-            && !target.IsImported())
-          {
-          cmQtAutoGenerators autogen;
-          if(autogen.InitializeAutogenTarget(&target))
-            {
-            autogens.push_back(std::make_pair(autogen, &target));
-            }
-          }
-        }
+  for (unsigned int i = 0; i < this->LocalGenerators.size(); ++i) {
+    std::vector<cmGeneratorTarget*> targets =
+      this->LocalGenerators[i]->GetGeneratorTargets();
+    std::vector<cmGeneratorTarget*> filteredTargets;
+    filteredTargets.reserve(targets.size());
+    for (std::vector<cmGeneratorTarget*>::iterator ti = targets.begin();
+         ti != targets.end(); ++ti) {
+      if ((*ti)->GetType() == cmStateEnums::GLOBAL_TARGET) {
+        continue;
       }
+      if ((*ti)->GetType() != cmStateEnums::EXECUTABLE &&
+          (*ti)->GetType() != cmStateEnums::STATIC_LIBRARY &&
+          (*ti)->GetType() != cmStateEnums::SHARED_LIBRARY &&
+          (*ti)->GetType() != cmStateEnums::MODULE_LIBRARY &&
+          (*ti)->GetType() != cmStateEnums::OBJECT_LIBRARY) {
+        continue;
+      }
+      if ((!(*ti)->GetPropertyAsBool("AUTOMOC") &&
+           !(*ti)->GetPropertyAsBool("AUTOUIC") &&
+           !(*ti)->GetPropertyAsBool("AUTORCC")) ||
+          (*ti)->IsImported()) {
+        continue;
+      }
+      // don't do anything if there is no Qt4 or Qt5Core (which contains moc):
+      cmMakefile* mf = (*ti)->Target->GetMakefile();
+      std::string qtMajorVersion = mf->GetSafeDefinition("QT_VERSION_MAJOR");
+      if (qtMajorVersion == "") {
+        qtMajorVersion = mf->GetSafeDefinition("Qt5Core_VERSION_MAJOR");
+      }
+      if (qtMajorVersion != "4" && qtMajorVersion != "5") {
+        continue;
+      }
+
+      cmGeneratorTarget* gt = *ti;
+
+      cmQtAutoGeneratorInitializer::InitializeAutogenSources(gt);
+      filteredTargets.push_back(gt);
     }
-#else
-  (void)autogens;
+    for (std::vector<cmGeneratorTarget*>::iterator ti =
+           filteredTargets.begin();
+         ti != filteredTargets.end(); ++ti) {
+      cmQtAutoGeneratorInitializer::InitializeAutogenTarget(
+        this->LocalGenerators[i], *ti);
+      autogenTargets.push_back(*ti);
+    }
+  }
 #endif
+  return autogenTargets;
 }
 
-//----------------------------------------------------------------------------
+cmLinkLineComputer* cmGlobalGenerator::CreateLinkLineComputer(
+  cmOutputConverter* outputConverter, cmStateDirectory const& stateDir) const
+{
+  return new cmLinkLineComputer(outputConverter, stateDir);
+}
+
+cmLinkLineComputer* cmGlobalGenerator::CreateMSVC60LinkLineComputer(
+  cmOutputConverter* outputConverter, cmStateDirectory const& stateDir) const
+{
+  return new cmMSVC60LinkLineComputer(outputConverter, stateDir);
+}
+
 void cmGlobalGenerator::FinalizeTargetCompileInfo()
 {
-  // Construct per-target generator information.
-  for(unsigned int i=0; i < this->LocalGenerators.size(); ++i)
-    {
-    cmMakefile *mf = this->LocalGenerators[i]->GetMakefile();
+  std::vector<std::string> const langs =
+    this->CMakeInstance->GetState()->GetEnabledLanguages();
 
-    const std::vector<cmValueWithOrigin> noconfig_compile_definitions =
-                                mf->GetCompileDefinitionsEntries();
+  // Construct per-target generator information.
+  for (unsigned int i = 0; i < this->Makefiles.size(); ++i) {
+    cmMakefile* mf = this->Makefiles[i];
+
+    const cmStringRange noconfig_compile_definitions =
+      mf->GetCompileDefinitionsEntries();
+    const cmBacktraceRange noconfig_compile_definitions_bts =
+      mf->GetCompileDefinitionsBacktraces();
 
     cmTargets& targets = mf->GetTargets();
-    for(cmTargets::iterator ti = targets.begin();
-        ti != targets.end(); ++ti)
-      {
+    for (cmTargets::iterator ti = targets.begin(); ti != targets.end(); ++ti) {
       cmTarget* t = &ti->second;
+      if (t->GetType() == cmStateEnums::GLOBAL_TARGET) {
+        continue;
+      }
 
       t->AppendBuildInterfaceIncludes();
 
-      if (t->GetType() == cmTarget::INTERFACE_LIBRARY)
-        {
+      if (t->GetType() == cmStateEnums::INTERFACE_LIBRARY) {
         continue;
-        }
+      }
 
-      for (std::vector<cmValueWithOrigin>::const_iterator it
-                                      = noconfig_compile_definitions.begin();
-          it != noconfig_compile_definitions.end(); ++it)
-        {
-        t->InsertCompileDefinition(*it);
-        }
+      cmBacktraceRange::const_iterator btIt =
+        noconfig_compile_definitions_bts.begin();
+      for (cmStringRange::const_iterator
+             it = noconfig_compile_definitions.begin();
+           it != noconfig_compile_definitions.end(); ++it, ++btIt) {
+        t->InsertCompileDefinition(*it, *btIt);
+      }
 
-      cmPolicies::PolicyStatus polSt
-                                  = mf->GetPolicyStatus(cmPolicies::CMP0043);
-      if (polSt == cmPolicies::WARN || polSt == cmPolicies::OLD)
-        {
+      cmPolicies::PolicyStatus polSt =
+        mf->GetPolicyStatus(cmPolicies::CMP0043);
+      if (polSt == cmPolicies::WARN || polSt == cmPolicies::OLD) {
         std::vector<std::string> configs;
         mf->GetConfigurations(configs);
 
-        for(std::vector<std::string>::const_iterator ci = configs.begin();
-            ci != configs.end(); ++ci)
-          {
+        for (std::vector<std::string>::const_iterator ci = configs.begin();
+             ci != configs.end(); ++ci) {
           std::string defPropName = "COMPILE_DEFINITIONS_";
           defPropName += cmSystemTools::UpperCase(*ci);
-          t->AppendProperty(defPropName,
-                            mf->GetProperty(defPropName));
-          }
+          t->AppendProperty(defPropName, mf->GetProperty(defPropName));
         }
       }
     }
+
+    // The standard include directories for each language
+    // should be treated as system include directories.
+    std::set<std::string> standardIncludesSet;
+    for (std::vector<std::string>::const_iterator li = langs.begin();
+         li != langs.end(); ++li) {
+      std::string const standardIncludesVar =
+        "CMAKE_" + *li + "_STANDARD_INCLUDE_DIRECTORIES";
+      std::string const standardIncludesStr =
+        mf->GetSafeDefinition(standardIncludesVar);
+      std::vector<std::string> standardIncludesVec;
+      cmSystemTools::ExpandListArgument(standardIncludesStr,
+                                        standardIncludesVec);
+      standardIncludesSet.insert(standardIncludesVec.begin(),
+                                 standardIncludesVec.end());
+    }
+    mf->AddSystemIncludeDirectories(standardIncludesSet);
+  }
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::CreateGeneratorTargets(cmMakefile *mf)
+void cmGlobalGenerator::CreateGeneratorTargets(
+  TargetTypes targetTypes, cmMakefile* mf, cmLocalGenerator* lg,
+  std::map<cmTarget*, cmGeneratorTarget*> const& importedMap)
 {
-  cmGeneratorTargetsType generatorTargets;
-  cmTargets& targets = mf->GetTargets();
-  for(cmTargets::iterator ti = targets.begin();
-      ti != targets.end(); ++ti)
-    {
-    cmTarget* t = &ti->second;
-    cmGeneratorTarget* gt = new cmGeneratorTarget(t);
-    this->ComputeTargetObjectDirectory(gt);
-    this->GeneratorTargets[t] = gt;
-    generatorTargets[t] = gt;
+  if (targetTypes == AllTargets) {
+    cmTargets& targets = mf->GetTargets();
+    for (cmTargets::iterator ti = targets.begin(); ti != targets.end(); ++ti) {
+      cmTarget* t = &ti->second;
+      cmGeneratorTarget* gt = new cmGeneratorTarget(t, lg);
+      lg->AddGeneratorTarget(gt);
     }
+  }
 
-  for(std::vector<cmTarget*>::const_iterator
-        j = mf->GetOwnedImportedTargets().begin();
-      j != mf->GetOwnedImportedTargets().end(); ++j)
-    {
-    cmGeneratorTarget* gt = new cmGeneratorTarget(*j);
-    this->GeneratorTargets[*j] = gt;
-    generatorTargets[*j] = gt;
-    }
-  mf->SetGeneratorTargets(generatorTargets);
+  std::vector<cmTarget*> itgts = mf->GetImportedTargets();
+
+  for (std::vector<cmTarget*>::const_iterator j = itgts.begin();
+       j != itgts.end(); ++j) {
+    lg->AddImportedGeneratorTarget(importedMap.find(*j)->second);
+  }
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::CreateGeneratorTargets()
+void cmGlobalGenerator::CreateGeneratorTargets(TargetTypes targetTypes)
 {
+  std::map<cmTarget*, cmGeneratorTarget*> importedMap;
+  for (unsigned int i = 0; i < this->Makefiles.size(); ++i) {
+    cmMakefile* mf = this->Makefiles[i];
+    for (std::vector<cmTarget*>::const_iterator j =
+           mf->GetOwnedImportedTargets().begin();
+         j != mf->GetOwnedImportedTargets().end(); ++j) {
+      cmLocalGenerator* lg = this->LocalGenerators[i];
+      cmGeneratorTarget* gt = new cmGeneratorTarget(*j, lg);
+      lg->AddOwnedImportedGeneratorTarget(gt);
+      importedMap[*j] = gt;
+    }
+  }
+
   // Construct per-target generator information.
-  for(unsigned int i=0; i < this->LocalGenerators.size(); ++i)
-    {
-    this->CreateGeneratorTargets(this->LocalGenerators[i]->GetMakefile());
-    }
+  for (unsigned int i = 0; i < this->LocalGenerators.size(); ++i) {
+    this->CreateGeneratorTargets(targetTypes, this->Makefiles[i],
+                                 this->LocalGenerators[i], importedMap);
+  }
 }
 
-
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::ClearGeneratorMembers()
 {
-  cmDeleteAll(this->GeneratorTargets);
-  this->GeneratorTargets.clear();
-
-  cmDeleteAll(this->EvaluationFiles);
-  this->EvaluationFiles.clear();
-
   cmDeleteAll(this->BuildExportSets);
   this->BuildExportSets.clear();
+
+  cmDeleteAll(this->Makefiles);
+  this->Makefiles.clear();
 
   cmDeleteAll(this->LocalGenerators);
   this->LocalGenerators.clear();
 
   this->ExportSets.clear();
   this->TargetDependencies.clear();
-  this->TotalTargets.clear();
-  this->ImportedTargets.clear();
-  this->LocalGeneratorToTargetMap.clear();
+  this->TargetSearchIndex.clear();
+  this->GeneratorTargetSearchIndex.clear();
+  this->MakefileSearchIndex.clear();
   this->ProjectMap.clear();
   this->RuleHashes.clear();
   this->DirectoryContentMap.clear();
   this->BinaryDirectories.clear();
 }
 
-//----------------------------------------------------------------------------
-cmGeneratorTarget*
-cmGlobalGenerator::GetGeneratorTarget(cmTarget const* t) const
-{
-  cmGeneratorTargetsType::const_iterator ti = this->GeneratorTargets.find(t);
-  if(ti == this->GeneratorTargets.end())
-    {
-    this->CMakeInstance->IssueMessage(
-      cmake::INTERNAL_ERROR, "Missing cmGeneratorTarget instance!");
-    return 0;
-    }
-  return ti->second;
-}
-
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::ComputeTargetObjectDirectory(cmGeneratorTarget*) const
+void cmGlobalGenerator::ComputeTargetObjectDirectory(
+  cmGeneratorTarget* /*unused*/) const
 {
 }
 
-void cmGlobalGenerator::CheckLocalGenerators()
+void cmGlobalGenerator::CheckTargetProperties()
 {
   std::map<std::string, std::string> notFoundMap;
-//  std::set<std::string> notFoundMap;
+  //  std::set<std::string> notFoundMap;
   // after it is all done do a ConfigureFinalPass
-  cmCacheManager* manager = 0;
-  for (unsigned int i = 0; i < this->LocalGenerators.size(); ++i)
-    {
-    manager = this->LocalGenerators[i]->GetMakefile()->GetCacheManager();
-    this->LocalGenerators[i]->ConfigureFinalPass();
-    cmTargets &targets =
-      this->LocalGenerators[i]->GetMakefile()->GetTargets();
-    for (cmTargets::iterator l = targets.begin();
-         l != targets.end(); l++)
-      {
-      if (l->second.GetType() == cmTarget::INTERFACE_LIBRARY)
-        {
+  cmState* state = this->GetCMakeInstance()->GetState();
+  for (unsigned int i = 0; i < this->Makefiles.size(); ++i) {
+    this->Makefiles[i]->ConfigureFinalPass();
+    cmTargets& targets = this->Makefiles[i]->GetTargets();
+    for (cmTargets::iterator l = targets.begin(); l != targets.end(); l++) {
+      if (l->second.GetType() == cmStateEnums::INTERFACE_LIBRARY) {
         continue;
-        }
+      }
       const cmTarget::LinkLibraryVectorType& libs =
         l->second.GetOriginalLinkLibraries();
-      for(cmTarget::LinkLibraryVectorType::const_iterator lib = libs.begin();
-          lib != libs.end(); ++lib)
-        {
-        if(lib->first.size() > 9 &&
-           cmSystemTools::IsNOTFOUND(lib->first.c_str()))
-          {
-          std::string varName = lib->first.substr(0, lib->first.size()-9);
-          cmCacheManager::CacheIterator it =
-            manager->GetCacheIterator(varName.c_str());
-          if(it.GetPropertyAsBool("ADVANCED"))
-            {
+      for (cmTarget::LinkLibraryVectorType::const_iterator lib = libs.begin();
+           lib != libs.end(); ++lib) {
+        if (lib->first.size() > 9 &&
+            cmSystemTools::IsNOTFOUND(lib->first.c_str())) {
+          std::string varName = lib->first.substr(0, lib->first.size() - 9);
+          if (state->GetCacheEntryPropertyAsBool(varName, "ADVANCED")) {
             varName += " (ADVANCED)";
-            }
+          }
           std::string text = notFoundMap[varName];
           text += "\n    linked by target \"";
           text += l->second.GetName();
           text += "\" in directory ";
-          text+=this->LocalGenerators[i]->GetMakefile()->GetCurrentDirectory();
+          text += this->Makefiles[i]->GetCurrentSourceDirectory();
           notFoundMap[varName] = text;
-          }
         }
+      }
       std::vector<std::string> incs;
-      const char *incDirProp = l->second.GetProperty("INCLUDE_DIRECTORIES");
-      if (!incDirProp)
-        {
+      const char* incDirProp = l->second.GetProperty("INCLUDE_DIRECTORIES");
+      if (!incDirProp) {
         continue;
-        }
+      }
 
-      std::string incDirs = cmGeneratorExpression::Preprocess(incDirProp,
-                        cmGeneratorExpression::StripAllGeneratorExpressions);
+      std::string incDirs = cmGeneratorExpression::Preprocess(
+        incDirProp, cmGeneratorExpression::StripAllGeneratorExpressions);
 
       cmSystemTools::ExpandListArgument(incDirs, incs);
 
-      for( std::vector<std::string>::const_iterator incDir = incs.begin();
-            incDir != incs.end(); ++incDir)
-        {
-        if(incDir->size() > 9 &&
-            cmSystemTools::IsNOTFOUND(incDir->c_str()))
-          {
-          std::string varName = incDir->substr(0, incDir->size()-9);
-          cmCacheManager::CacheIterator it =
-            manager->GetCacheIterator(varName.c_str());
-          if(it.GetPropertyAsBool("ADVANCED"))
-            {
+      for (std::vector<std::string>::const_iterator incDir = incs.begin();
+           incDir != incs.end(); ++incDir) {
+        if (incDir->size() > 9 && cmSystemTools::IsNOTFOUND(incDir->c_str())) {
+          std::string varName = incDir->substr(0, incDir->size() - 9);
+          if (state->GetCacheEntryPropertyAsBool(varName, "ADVANCED")) {
             varName += " (ADVANCED)";
-            }
+          }
           std::string text = notFoundMap[varName];
           text += "\n   used as include directory in directory ";
-          text += this->LocalGenerators[i]
-                      ->GetMakefile()->GetCurrentDirectory();
+          text += this->Makefiles[i]->GetCurrentSourceDirectory();
           notFoundMap[varName] = text;
-          }
         }
       }
-    this->CMakeInstance->UpdateProgress
-      ("Configuring", 0.9f+0.1f*(static_cast<float>(i)+1.0f)/
-        static_cast<float>(this->LocalGenerators.size()));
     }
+    this->CMakeInstance->UpdateProgress(
+      "Configuring", 0.9f +
+        0.1f * (static_cast<float>(i) + 1.0f) /
+          static_cast<float>(this->Makefiles.size()));
+  }
 
-  if(!notFoundMap.empty())
-    {
+  if (!notFoundMap.empty()) {
     std::string notFoundVars;
-    for(std::map<std::string, std::string>::const_iterator
-        ii = notFoundMap.begin();
-        ii != notFoundMap.end();
-        ++ii)
-      {
+    for (std::map<std::string, std::string>::const_iterator ii =
+           notFoundMap.begin();
+         ii != notFoundMap.end(); ++ii) {
       notFoundVars += ii->first;
       notFoundVars += ii->second;
       notFoundVars += "\n";
-      }
+    }
     cmSystemTools::Error("The following variables are used in this project, "
                          "but they are set to NOTFOUND.\n"
                          "Please set them or make sure they are set and "
                          "tested correctly in the CMake files:\n",
                          notFoundVars.c_str());
-    }
+  }
 }
 
 int cmGlobalGenerator::TryCompile(const std::string& srcdir,
                                   const std::string& bindir,
                                   const std::string& projectName,
                                   const std::string& target, bool fast,
-                                  std::string& output, cmMakefile *mf)
+                                  std::string& output, cmMakefile* mf)
 {
   // if this is not set, then this is a first time configure
   // and there is a good chance that the try compile stuff will
   // take the bulk of the time, so try and guess some progress
   // by getting closer and closer to 100 without actually getting there.
-  if (!this->CMakeInstance->GetCacheManager()->GetCacheValue
-      ("CMAKE_NUMBER_OF_LOCAL_GENERATORS"))
-    {
-    // If CMAKE_NUMBER_OF_LOCAL_GENERATORS is not set
+  if (!this->CMakeInstance->GetState()->GetInitializedCacheValue(
+        "CMAKE_NUMBER_OF_MAKEFILES")) {
+    // If CMAKE_NUMBER_OF_MAKEFILES is not set
     // we are in the first time progress and we have no
     // idea how long it will be.  So, just move 1/10th of the way
     // there each time, and don't go over 95%
-    this->FirstTimeProgress += ((1.0f - this->FirstTimeProgress) /30.0f);
-    if(this->FirstTimeProgress > 0.95f)
-      {
+    this->FirstTimeProgress += ((1.0f - this->FirstTimeProgress) / 30.0f);
+    if (this->FirstTimeProgress > 0.95f) {
       this->FirstTimeProgress = 0.95f;
-      }
+    }
     this->CMakeInstance->UpdateProgress("Configuring",
                                         this->FirstTimeProgress);
-    }
+  }
 
   std::string newTarget;
-  if (!target.empty())
-    {
+  if (!target.empty()) {
     newTarget += target;
 #if 0
 #if defined(_WIN32) || defined(__CYGWIN__)
@@ -1673,41 +1752,37 @@ int cmGlobalGenerator::TryCompile(const std::string& srcdir,
       }
 #endif // WIN32
 #endif
-    }
+  }
   std::string config =
     mf->GetSafeDefinition("CMAKE_TRY_COMPILE_CONFIGURATION");
-  return this->Build(srcdir,bindir,projectName,
-                     newTarget,
-                     output,"",config,false,fast,false,
-                     this->TryCompileTimeout);
+  return this->Build(srcdir, bindir, projectName, newTarget, output, "",
+                     config, false, fast, false, this->TryCompileTimeout);
 }
 
 void cmGlobalGenerator::GenerateBuildCommand(
-  std::vector<std::string>& makeCommand, const std::string&,
-  const std::string&, const std::string&, const std::string&,
-  const std::string&, bool, bool,
-  std::vector<std::string> const&)
+  std::vector<std::string>& makeCommand, const std::string& /*unused*/,
+  const std::string& /*unused*/, const std::string& /*unused*/,
+  const std::string& /*unused*/, const std::string& /*unused*/,
+  bool /*unused*/, bool /*unused*/, std::vector<std::string> const& /*unused*/)
 {
   makeCommand.push_back(
     "cmGlobalGenerator::GenerateBuildCommand not implemented");
 }
 
-int cmGlobalGenerator::Build(
-  const std::string&, const std::string& bindir,
-  const std::string& projectName, const std::string& target,
-  std::string& output,
-  const std::string& makeCommandCSTR,
-  const std::string& config,
-  bool clean, bool fast, bool verbose,
-  double timeout,
-  cmSystemTools::OutputOption outputflag,
-  std::vector<std::string> const& nativeOptions)
+int cmGlobalGenerator::Build(const std::string& /*unused*/,
+                             const std::string& bindir,
+                             const std::string& projectName,
+                             const std::string& target, std::string& output,
+                             const std::string& makeCommandCSTR,
+                             const std::string& config, bool clean, bool fast,
+                             bool verbose, double timeout,
+                             cmSystemTools::OutputOption outputflag,
+                             std::vector<std::string> const& nativeOptions)
 {
   /**
    * Run an executable command and put the stdout in output.
    */
-  std::string cwd = cmSystemTools::GetCurrentWorkingDirectory();
-  cmSystemTools::ChangeDirectory(bindir);
+  cmWorkingDirectory workdir(bindir);
   output += "Change Dir: ";
   output += bindir;
   output += "\n";
@@ -1719,21 +1794,19 @@ int cmGlobalGenerator::Build(
   std::string* outputPtr = &outputBuffer;
 
   std::vector<std::string> makeCommand;
-  this->GenerateBuildCommand(makeCommand, makeCommandCSTR, projectName,
-                             bindir, target, config, fast, verbose,
-                             nativeOptions);
+  this->GenerateBuildCommand(makeCommand, makeCommandCSTR, projectName, bindir,
+                             target, config, fast, verbose, nativeOptions);
 
   // Workaround to convince VCExpress.exe to produce output.
   if (outputflag == cmSystemTools::OUTPUT_PASSTHROUGH &&
-      !makeCommand.empty() && cmSystemTools::LowerCase(
-        cmSystemTools::GetFilenameName(makeCommand[0])) == "vcexpress.exe")
-    {
-    outputflag = cmSystemTools::OUTPUT_NORMAL;
-    }
+      !makeCommand.empty() &&
+      cmSystemTools::LowerCase(
+        cmSystemTools::GetFilenameName(makeCommand[0])) == "vcexpress.exe") {
+    outputflag = cmSystemTools::OUTPUT_FORWARD;
+  }
 
   // should we do a clean first?
-  if (clean)
-    {
+  if (clean) {
     std::vector<std::string> cleanCommand;
     this->GenerateBuildCommand(cleanCommand, makeCommandCSTR, projectName,
                                bindir, "clean", config, fast, verbose);
@@ -1741,20 +1814,18 @@ int cmGlobalGenerator::Build(
     output += cmSystemTools::PrintSingleCommand(cleanCommand);
     output += "\n";
 
-    if (!cmSystemTools::RunSingleCommand(cleanCommand, outputPtr,
-                                         &retVal, 0, outputflag, timeout))
-      {
+    if (!cmSystemTools::RunSingleCommand(cleanCommand, outputPtr, outputPtr,
+                                         &retVal, CM_NULLPTR, outputflag,
+                                         timeout)) {
       cmSystemTools::SetRunCommandHideConsole(hideconsole);
       cmSystemTools::Error("Generator: execution of make clean failed.");
       output += *outputPtr;
       output += "\nGenerator: execution of make clean failed.\n";
 
-      // return to the original directory
-      cmSystemTools::ChangeDirectory(cwd);
       return 1;
-      }
-    output += *outputPtr;
     }
+    output += *outputPtr;
+  }
 
   // now build
   std::string makeCommandStr = cmSystemTools::PrintSingleCommand(makeCommand);
@@ -1762,119 +1833,104 @@ int cmGlobalGenerator::Build(
   output += makeCommandStr;
   output += "\n";
 
-  if (!cmSystemTools::RunSingleCommand(makeCommand, outputPtr,
-                                       &retVal, 0, outputflag, timeout))
-    {
+  if (!cmSystemTools::RunSingleCommand(makeCommand, outputPtr, outputPtr,
+                                       &retVal, CM_NULLPTR, outputflag,
+                                       timeout)) {
     cmSystemTools::SetRunCommandHideConsole(hideconsole);
-    cmSystemTools::Error
-      ("Generator: execution of make failed. Make command was: ",
-       makeCommandStr.c_str());
+    cmSystemTools::Error(
+      "Generator: execution of make failed. Make command was: ",
+      makeCommandStr.c_str());
     output += *outputPtr;
-    output += "\nGenerator: execution of make failed. Make command was: "
-        + makeCommandStr + "\n";
+    output += "\nGenerator: execution of make failed. Make command was: " +
+      makeCommandStr + "\n";
 
-    // return to the original directory
-    cmSystemTools::ChangeDirectory(cwd);
     return 1;
-    }
+  }
   output += *outputPtr;
   cmSystemTools::SetRunCommandHideConsole(hideconsole);
 
   // The SGI MipsPro 7.3 compiler does not return an error code when
   // the source has a #error in it!  This is a work-around for such
   // compilers.
-  if((retVal == 0) && (output.find("#error") != std::string::npos))
-    {
+  if ((retVal == 0) && (output.find("#error") != std::string::npos)) {
     retVal = 1;
-    }
+  }
 
-  cmSystemTools::ChangeDirectory(cwd);
   return retVal;
 }
 
-//----------------------------------------------------------------------------
 std::string cmGlobalGenerator::GenerateCMakeBuildCommand(
   const std::string& target, const std::string& config,
-  const std::string& native,
-  bool ignoreErrors)
+  const std::string& native, bool ignoreErrors)
 {
   std::string makeCommand = cmSystemTools::GetCMakeCommand();
   makeCommand = cmSystemTools::ConvertToOutputPath(makeCommand.c_str());
   makeCommand += " --build .";
-  if(!config.empty())
-    {
+  if (!config.empty()) {
     makeCommand += " --config \"";
     makeCommand += config;
     makeCommand += "\"";
-    }
-  if(!target.empty())
-    {
+  }
+  if (!target.empty()) {
     makeCommand += " --target \"";
     makeCommand += target;
     makeCommand += "\"";
-    }
+  }
   const char* sep = " -- ";
-  if(ignoreErrors)
-    {
+  if (ignoreErrors) {
     const char* iflag = this->GetBuildIgnoreErrorsFlag();
-    if(iflag && *iflag)
-      {
+    if (iflag && *iflag) {
       makeCommand += sep;
       makeCommand += iflag;
       sep = " ";
-      }
     }
-  if(!native.empty())
-    {
+  }
+  if (!native.empty()) {
     makeCommand += sep;
     makeCommand += native;
-    }
+  }
   return makeCommand;
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::AddLocalGenerator(cmLocalGenerator *lg)
+void cmGlobalGenerator::AddMakefile(cmMakefile* mf)
 {
-  this->LocalGenerators.push_back(lg);
+  this->Makefiles.push_back(mf);
+  this->IndexMakefile(mf);
 
   // update progress
   // estimate how many lg there will be
-  const char *numGenC =
-    this->CMakeInstance->GetCacheManager()->GetCacheValue
-    ("CMAKE_NUMBER_OF_LOCAL_GENERATORS");
+  const char* numGenC =
+    this->CMakeInstance->GetState()->GetInitializedCacheValue(
+      "CMAKE_NUMBER_OF_MAKEFILES");
 
-  if (!numGenC)
-    {
-    // If CMAKE_NUMBER_OF_LOCAL_GENERATORS is not set
+  if (!numGenC) {
+    // If CMAKE_NUMBER_OF_MAKEFILES is not set
     // we are in the first time progress and we have no
     // idea how long it will be.  So, just move half way
     // there each time, and don't go over 95%
-    this->FirstTimeProgress += ((1.0f - this->FirstTimeProgress) /30.0f);
-    if(this->FirstTimeProgress > 0.95f)
-      {
+    this->FirstTimeProgress += ((1.0f - this->FirstTimeProgress) / 30.0f);
+    if (this->FirstTimeProgress > 0.95f) {
       this->FirstTimeProgress = 0.95f;
-      }
+    }
     this->CMakeInstance->UpdateProgress("Configuring",
                                         this->FirstTimeProgress);
     return;
-    }
+  }
 
   int numGen = atoi(numGenC);
-  float prog = 0.9f*static_cast<float>(this->LocalGenerators.size())/
+  float prog = 0.9f * static_cast<float>(this->Makefiles.size()) /
     static_cast<float>(numGen);
-  if (prog > 0.9f)
-    {
+  if (prog > 0.9f) {
     prog = 0.9f;
-    }
+  }
   this->CMakeInstance->UpdateProgress("Configuring", prog);
 }
 
 void cmGlobalGenerator::AddInstallComponent(const char* component)
 {
-  if(component && *component)
-    {
+  if (component && *component) {
     this->InstallComponents.insert(component);
-    }
+  }
 }
 
 void cmGlobalGenerator::EnableInstallTarget()
@@ -1882,25 +1938,23 @@ void cmGlobalGenerator::EnableInstallTarget()
   this->InstallTargetEnabled = true;
 }
 
-cmLocalGenerator *cmGlobalGenerator::CreateLocalGenerator()
+cmLocalGenerator* cmGlobalGenerator::CreateLocalGenerator(cmMakefile* mf)
 {
-  cmLocalGenerator *lg = new cmLocalGenerator;
-  lg->SetGlobalGenerator(this);
-  return lg;
+  return new cmLocalGenerator(this, mf);
 }
 
-void cmGlobalGenerator::EnableLanguagesFromGenerator(cmGlobalGenerator *gen,
+void cmGlobalGenerator::EnableLanguagesFromGenerator(cmGlobalGenerator* gen,
                                                      cmMakefile* mf)
 {
   this->SetConfiguredFilesPath(gen);
   this->TryCompileOuterMakefile = mf;
   const char* make =
     gen->GetCMakeInstance()->GetCacheDefinition("CMAKE_MAKE_PROGRAM");
-  this->GetCMakeInstance()->AddCacheEntry("CMAKE_MAKE_PROGRAM", make,
-                                          "make program",
-                                          cmCacheManager::FILEPATH);
+  this->GetCMakeInstance()->AddCacheEntry(
+    "CMAKE_MAKE_PROGRAM", make, "make program", cmStateEnums::FILEPATH);
   // copy the enabled languages
-  this->LanguageEnabled = gen->LanguageEnabled;
+  this->GetCMakeInstance()->GetState()->SetEnabledLanguages(
+    gen->GetCMakeInstance()->GetState()->GetEnabledLanguages());
   this->LanguagesReady = gen->LanguagesReady;
   this->ExtensionToLanguage = gen->ExtensionToLanguage;
   this->IgnoreExtensions = gen->IgnoreExtensions;
@@ -1909,75 +1963,72 @@ void cmGlobalGenerator::EnableLanguagesFromGenerator(cmGlobalGenerator *gen,
   this->OutputExtensions = gen->OutputExtensions;
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::SetConfiguredFilesPath(cmGlobalGenerator* gen)
 {
-  if(!gen->ConfiguredFilesPath.empty())
-    {
+  if (!gen->ConfiguredFilesPath.empty()) {
     this->ConfiguredFilesPath = gen->ConfiguredFilesPath;
-    }
-  else
-    {
+  } else {
     this->ConfiguredFilesPath = gen->CMakeInstance->GetHomeOutputDirectory();
     this->ConfiguredFilesPath += cmake::GetCMakeFilesDirectory();
+  }
+}
+
+bool cmGlobalGenerator::IsExcluded(cmStateSnapshot const& rootSnp,
+                                   cmStateSnapshot const& snp_) const
+{
+  cmStateSnapshot snp = snp_;
+  while (snp.IsValid()) {
+    if (snp == rootSnp) {
+      // No directory excludes itself.
+      return false;
     }
+
+    if (snp.GetDirectory().GetPropertyAsBool("EXCLUDE_FROM_ALL")) {
+      // This directory is excluded from its parent.
+      return true;
+    }
+    snp = snp.GetBuildsystemDirectoryParent();
+  }
+  return false;
 }
 
 bool cmGlobalGenerator::IsExcluded(cmLocalGenerator* root,
                                    cmLocalGenerator* gen) const
 {
-  if(!gen || gen == root)
-    {
-    // No directory excludes itself.
-    return false;
-    }
+  assert(gen);
 
-  if(gen->GetMakefile()->GetPropertyAsBool("EXCLUDE_FROM_ALL"))
-    {
-    // This directory is excluded from its parent.
-    return true;
-    }
+  cmStateSnapshot rootSnp = root->GetStateSnapshot();
+  cmStateSnapshot snp = gen->GetStateSnapshot();
 
-  // This directory is included in its parent.  Check whether the
-  // parent is excluded.
-  return this->IsExcluded(root, gen->GetParent());
+  return this->IsExcluded(rootSnp, snp);
 }
 
 bool cmGlobalGenerator::IsExcluded(cmLocalGenerator* root,
-                                   cmTarget const& target) const
+                                   cmGeneratorTarget* target) const
 {
-  if(target.GetType() == cmTarget::INTERFACE_LIBRARY
-      || target.GetPropertyAsBool("EXCLUDE_FROM_ALL"))
-    {
+  if (target->GetType() == cmStateEnums::INTERFACE_LIBRARY ||
+      target->GetPropertyAsBool("EXCLUDE_FROM_ALL")) {
     // This target is excluded from its directory.
     return true;
-    }
-  else
-    {
-    // This target is included in its directory.  Check whether the
-    // directory is excluded.
-    return this->IsExcluded(root, target.GetMakefile()->GetLocalGenerator());
-    }
+  }
+  // This target is included in its directory.  Check whether the
+  // directory is excluded.
+  return this->IsExcluded(root, target->GetLocalGenerator());
 }
 
-void
-cmGlobalGenerator::GetEnabledLanguages(std::vector<std::string>& lang) const
+void cmGlobalGenerator::GetEnabledLanguages(
+  std::vector<std::string>& lang) const
 {
-  for(std::map<std::string, bool>::const_iterator i =
-        this->LanguageEnabled.begin(); i != this->LanguageEnabled.end(); ++i)
-    {
-    lang.push_back(i->first);
-    }
+  lang = this->CMakeInstance->GetState()->GetEnabledLanguages();
 }
 
 int cmGlobalGenerator::GetLinkerPreference(const std::string& lang) const
 {
   std::map<std::string, int>::const_iterator it =
-                                   this->LanguageToLinkerPreference.find(lang);
-  if (it != this->LanguageToLinkerPreference.end())
-    {
+    this->LanguageToLinkerPreference.find(lang);
+  if (it != this->LanguageToLinkerPreference.end()) {
     return it->second;
-    }
+  }
   return 0;
 }
 
@@ -1985,442 +2036,421 @@ void cmGlobalGenerator::FillProjectMap()
 {
   this->ProjectMap.clear(); // make sure we start with a clean map
   unsigned int i;
-  for(i = 0; i < this->LocalGenerators.size(); ++i)
-    {
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
     // for each local generator add all projects
-    cmLocalGenerator *lg = this->LocalGenerators[i];
+    cmStateSnapshot snp = this->LocalGenerators[i]->GetStateSnapshot();
     std::string name;
-    do
-      {
-      if (name != lg->GetMakefile()->GetProjectName())
-        {
-        name = lg->GetMakefile()->GetProjectName();
+    do {
+      std::string snpProjName = snp.GetProjectName();
+      if (name != snpProjName) {
+        name = snpProjName;
         this->ProjectMap[name].push_back(this->LocalGenerators[i]);
-        }
-      lg = lg->GetParent();
       }
-    while (lg);
-    }
+      snp = snp.GetBuildsystemDirectoryParent();
+    } while (snp.IsValid());
+  }
 }
 
-
-// Build a map that contains a the set of targets used by each local
-// generator directory level.
-void cmGlobalGenerator::FillLocalGeneratorToTargetMap()
+cmMakefile* cmGlobalGenerator::FindMakefile(const std::string& start_dir) const
 {
-  this->LocalGeneratorToTargetMap.clear();
-  // Loop over all targets in all local generators.
-  for(std::vector<cmLocalGenerator*>::const_iterator
-        lgi = this->LocalGenerators.begin();
-      lgi != this->LocalGenerators.end(); ++lgi)
-    {
-    cmLocalGenerator* lg = *lgi;
-    cmMakefile* mf = lg->GetMakefile();
-    cmTargets const& targets = mf->GetTargets();
-    for(cmTargets::const_iterator t = targets.begin(); t != targets.end(); ++t)
-      {
-      cmTarget const& target = t->second;
-
-      // Consider the directory containing the target and all its
-      // parents until something excludes the target.
-      for(cmLocalGenerator* clg = lg; clg && !this->IsExcluded(clg, target);
-          clg = clg->GetParent())
-        {
-        // This local generator includes the target.
-        std::set<cmTarget const*>& targetSet =
-          this->LocalGeneratorToTargetMap[clg];
-        targetSet.insert(&target);
-
-        // Add dependencies of the included target.  An excluded
-        // target may still be included if it is a dependency of a
-        // non-excluded target.
-        TargetDependSet const& tgtdeps = this->GetTargetDirectDepends(target);
-        for(TargetDependSet::const_iterator ti = tgtdeps.begin();
-            ti != tgtdeps.end(); ++ti)
-          {
-          cmTarget const* ttt = *ti;
-          targetSet.insert(ttt);
-          }
-        }
-      }
-    }
+  MakefileMap::const_iterator i = this->MakefileSearchIndex.find(start_dir);
+  if (i != this->MakefileSearchIndex.end()) {
+    return i->second;
+  }
+  return CM_NULLPTR;
 }
-
 
 ///! Find a local generator by its startdirectory
-cmLocalGenerator*
-cmGlobalGenerator::FindLocalGenerator(const std::string& start_dir) const
+cmLocalGenerator* cmGlobalGenerator::FindLocalGenerator(
+  const std::string& start_dir) const
 {
-  for(std::vector<cmLocalGenerator*>::const_iterator it =
-      this->LocalGenerators.begin(); it != this->LocalGenerators.end(); ++it)
-    {
-    std::string sd = (*it)->GetMakefile()->GetStartDirectory();
-    if (sd == start_dir)
-      {
+  for (std::vector<cmLocalGenerator*>::const_iterator it =
+         this->LocalGenerators.begin();
+       it != this->LocalGenerators.end(); ++it) {
+    std::string sd = (*it)->GetCurrentSourceDirectory();
+    if (sd == start_dir) {
       return *it;
-      }
     }
-  return 0;
+  }
+  return CM_NULLPTR;
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::AddAlias(const std::string& name, cmTarget *tgt)
+void cmGlobalGenerator::AddAlias(const std::string& name,
+                                 std::string const& tgtName)
 {
-  this->AliasTargets[name] = tgt;
+  this->AliasTargets[name] = tgtName;
 }
 
-//----------------------------------------------------------------------------
 bool cmGlobalGenerator::IsAlias(const std::string& name) const
 {
   return this->AliasTargets.find(name) != this->AliasTargets.end();
 }
 
-//----------------------------------------------------------------------------
-cmTarget*
-cmGlobalGenerator::FindTarget(const std::string& name,
-                              bool excludeAliases) const
+void cmGlobalGenerator::IndexTarget(cmTarget* t)
 {
-  if (!excludeAliases)
-    {
-    TargetMap::const_iterator ai = this->AliasTargets.find(name);
-    if (ai != this->AliasTargets.end())
-      {
-      return ai->second;
-      }
-    }
-  TargetMap::const_iterator i = this->TotalTargets.find ( name );
-  if ( i != this->TotalTargets.end() )
-    {
-    return i->second;
-    }
-  i = this->ImportedTargets.find(name);
-  if ( i != this->ImportedTargets.end() )
-    {
-    return i->second;
-    }
-  return 0;
+  if (!t->IsImported() || t->IsImportedGloballyVisible()) {
+    this->TargetSearchIndex[t->GetName()] = t;
+  }
 }
 
-//----------------------------------------------------------------------------
-bool
-cmGlobalGenerator::NameResolvesToFramework(const std::string& libname) const
+void cmGlobalGenerator::IndexGeneratorTarget(cmGeneratorTarget* gt)
 {
-  if(cmSystemTools::IsPathToFramework(libname.c_str()))
-    {
-    return true;
-    }
+  if (!gt->IsImported() || gt->IsImportedGloballyVisible()) {
+    this->GeneratorTargetSearchIndex[gt->GetName()] = gt;
+  }
+}
 
-  if(cmTarget* tgt = this->FindTarget(libname))
-    {
-    if(tgt->IsFrameworkOnApple())
-       {
-       return true;
-       }
+void cmGlobalGenerator::IndexMakefile(cmMakefile* mf)
+{
+  // FIXME: add_subdirectory supports multiple build directories
+  // sharing the same source directory.  We currently index only the
+  // first one, because that is what FindMakefile has always returned.
+  // All of its callers will need to be modified to support looking
+  // up directories by build directory path.
+  this->MakefileSearchIndex.insert(
+    MakefileMap::value_type(mf->GetCurrentSourceDirectory(), mf));
+}
+
+cmTarget* cmGlobalGenerator::FindTargetImpl(std::string const& name) const
+{
+  TargetMap::const_iterator i = this->TargetSearchIndex.find(name);
+  if (i != this->TargetSearchIndex.end()) {
+    return i->second;
+  }
+  return CM_NULLPTR;
+}
+
+cmGeneratorTarget* cmGlobalGenerator::FindGeneratorTargetImpl(
+  std::string const& name) const
+{
+  GeneratorTargetMap::const_iterator i =
+    this->GeneratorTargetSearchIndex.find(name);
+  if (i != this->GeneratorTargetSearchIndex.end()) {
+    return i->second;
+  }
+  return CM_NULLPTR;
+}
+
+cmTarget* cmGlobalGenerator::FindTarget(const std::string& name,
+                                        bool excludeAliases) const
+{
+  if (!excludeAliases) {
+    std::map<std::string, std::string>::const_iterator ai =
+      this->AliasTargets.find(name);
+    if (ai != this->AliasTargets.end()) {
+      return this->FindTargetImpl(ai->second);
     }
+  }
+  return this->FindTargetImpl(name);
+}
+
+cmGeneratorTarget* cmGlobalGenerator::FindGeneratorTarget(
+  const std::string& name) const
+{
+  std::map<std::string, std::string>::const_iterator ai =
+    this->AliasTargets.find(name);
+  if (ai != this->AliasTargets.end()) {
+    return this->FindGeneratorTargetImpl(ai->second);
+  }
+  return this->FindGeneratorTargetImpl(name);
+}
+
+bool cmGlobalGenerator::NameResolvesToFramework(
+  const std::string& libname) const
+{
+  if (cmSystemTools::IsPathToFramework(libname.c_str())) {
+    return true;
+  }
+
+  if (cmTarget* tgt = this->FindTarget(libname)) {
+    if (tgt->IsFrameworkOnApple()) {
+      return true;
+    }
+  }
 
   return false;
 }
 
-//----------------------------------------------------------------------------
 inline std::string removeQuotes(const std::string& s)
 {
-  if(s[0] == '\"' && s[s.size()-1] == '\"')
-    {
-    return s.substr(1, s.size()-2);
-    }
+  if (s[0] == '\"' && s[s.size() - 1] == '\"') {
+    return s.substr(1, s.size() - 2);
+  }
   return s;
 }
 
-void cmGlobalGenerator::SetCMakeInstance(cmake* cm)
+void cmGlobalGenerator::CreateDefaultGlobalTargets(
+  std::vector<GlobalTargetInfo>& targets)
 {
-  // Store a pointer to the cmake object instance.
-  this->CMakeInstance = cm;
+  this->AddGlobalTarget_Package(targets);
+  this->AddGlobalTarget_PackageSource(targets);
+  this->AddGlobalTarget_Test(targets);
+  this->AddGlobalTarget_EditCache(targets);
+  this->AddGlobalTarget_RebuildCache(targets);
+  this->AddGlobalTarget_Install(targets);
 }
 
-void cmGlobalGenerator::CreateDefaultGlobalTargets(cmTargets* targets)
+void cmGlobalGenerator::AddGlobalTarget_Package(
+  std::vector<GlobalTargetInfo>& targets)
 {
-  cmMakefile* mf = this->LocalGenerators[0]->GetMakefile();
+  cmMakefile* mf = this->Makefiles[0];
   const char* cmakeCfgIntDir = this->GetCMakeCFGIntDir();
-  const char* cmakeCommand = mf->GetRequiredDefinition("CMAKE_COMMAND");
-
-  // CPack
-  std::string workingDir =  mf->GetStartOutputDirectory();
-  cmCustomCommandLines cpackCommandLines;
-  std::vector<std::string> depends;
+  GlobalTargetInfo gti;
+  gti.Name = this->GetPackageTargetName();
+  gti.Message = "Run CPack packaging tool...";
+  gti.UsesTerminal = true;
+  gti.WorkingDir = mf->GetCurrentBinaryDirectory();
   cmCustomCommandLine singleLine;
   singleLine.push_back(cmSystemTools::GetCPackCommand());
-  if ( cmakeCfgIntDir && *cmakeCfgIntDir && cmakeCfgIntDir[0] != '.' )
-    {
+  if (cmakeCfgIntDir && *cmakeCfgIntDir && cmakeCfgIntDir[0] != '.') {
     singleLine.push_back("-C");
     singleLine.push_back(cmakeCfgIntDir);
-    }
+  }
   singleLine.push_back("--config");
-  std::string configFile = mf->GetStartOutputDirectory();;
+  std::string configFile = mf->GetCurrentBinaryDirectory();
   configFile += "/CPackConfig.cmake";
   std::string relConfigFile = "./CPackConfig.cmake";
   singleLine.push_back(relConfigFile);
-  cpackCommandLines.push_back(singleLine);
-  if ( this->GetPreinstallTargetName() )
-    {
-    depends.push_back(this->GetPreinstallTargetName());
-    }
-  else
-    {
+  gti.CommandLines.push_back(singleLine);
+  if (this->GetPreinstallTargetName()) {
+    gti.Depends.push_back(this->GetPreinstallTargetName());
+  } else {
     const char* noPackageAll =
       mf->GetDefinition("CMAKE_SKIP_PACKAGE_ALL_DEPENDENCY");
-    if(!noPackageAll || cmSystemTools::IsOff(noPackageAll))
-      {
-      depends.push_back(this->GetAllTargetName());
-      }
+    if (!noPackageAll || cmSystemTools::IsOff(noPackageAll)) {
+      gti.Depends.push_back(this->GetAllTargetName());
     }
-  if(cmSystemTools::FileExists(configFile.c_str()))
-    {
-    (*targets)[this->GetPackageTargetName()]
-      = this->CreateGlobalTarget(this->GetPackageTargetName(),
-                                 "Run CPack packaging tool...",
-                                 &cpackCommandLines, depends,
-                                 workingDir.c_str(), /*uses_terminal*/true);
-    }
-  // CPack source
+  }
+  if (cmSystemTools::FileExists(configFile.c_str())) {
+    targets.push_back(gti);
+  }
+}
+
+void cmGlobalGenerator::AddGlobalTarget_PackageSource(
+  std::vector<GlobalTargetInfo>& targets)
+{
+  cmMakefile* mf = this->Makefiles[0];
   const char* packageSourceTargetName = this->GetPackageSourceTargetName();
-  if ( packageSourceTargetName )
-    {
-    cpackCommandLines.erase(cpackCommandLines.begin(),
-                            cpackCommandLines.end());
-    singleLine.erase(singleLine.begin(), singleLine.end());
-    depends.erase(depends.begin(), depends.end());
+  if (packageSourceTargetName) {
+    GlobalTargetInfo gti;
+    gti.Name = packageSourceTargetName;
+    gti.Message = "Run CPack packaging tool for source...";
+    gti.WorkingDir = mf->GetCurrentBinaryDirectory();
+    gti.UsesTerminal = true;
+    cmCustomCommandLine singleLine;
     singleLine.push_back(cmSystemTools::GetCPackCommand());
     singleLine.push_back("--config");
-    configFile = mf->GetStartOutputDirectory();;
+    std::string configFile = mf->GetCurrentBinaryDirectory();
     configFile += "/CPackSourceConfig.cmake";
-    relConfigFile = "./CPackSourceConfig.cmake";
+    std::string relConfigFile = "./CPackSourceConfig.cmake";
     singleLine.push_back(relConfigFile);
-    if(cmSystemTools::FileExists(configFile.c_str()))
-      {
+    if (cmSystemTools::FileExists(configFile.c_str())) {
       singleLine.push_back(configFile);
-      cpackCommandLines.push_back(singleLine);
-      (*targets)[packageSourceTargetName]
-        = this->CreateGlobalTarget(packageSourceTargetName,
-                                   "Run CPack packaging tool for source...",
-                                   &cpackCommandLines, depends,
-                                   workingDir.c_str(), /*uses_terminal*/true);
-      }
+      gti.CommandLines.push_back(singleLine);
+      targets.push_back(gti);
     }
+  }
+}
 
-  // Test
-  if(mf->IsOn("CMAKE_TESTING_ENABLED"))
-    {
-    cpackCommandLines.erase(cpackCommandLines.begin(),
-                            cpackCommandLines.end());
-    singleLine.erase(singleLine.begin(), singleLine.end());
-    depends.erase(depends.begin(), depends.end());
+void cmGlobalGenerator::AddGlobalTarget_Test(
+  std::vector<GlobalTargetInfo>& targets)
+{
+  cmMakefile* mf = this->Makefiles[0];
+  const char* cmakeCfgIntDir = this->GetCMakeCFGIntDir();
+  if (mf->IsOn("CMAKE_TESTING_ENABLED")) {
+    GlobalTargetInfo gti;
+    gti.Name = this->GetTestTargetName();
+    gti.Message = "Running tests...";
+    gti.UsesTerminal = true;
+    cmCustomCommandLine singleLine;
     singleLine.push_back(cmSystemTools::GetCTestCommand());
     singleLine.push_back("--force-new-ctest-process");
-    if(cmakeCfgIntDir && *cmakeCfgIntDir && cmakeCfgIntDir[0] != '.')
-      {
+    if (cmakeCfgIntDir && *cmakeCfgIntDir && cmakeCfgIntDir[0] != '.') {
       singleLine.push_back("-C");
       singleLine.push_back(cmakeCfgIntDir);
-      }
-    else // TODO: This is a hack. Should be something to do with the generator
-      {
-      singleLine.push_back("$(ARGS)");
-      }
-    cpackCommandLines.push_back(singleLine);
-    (*targets)[this->GetTestTargetName()]
-      = this->CreateGlobalTarget(this->GetTestTargetName(),
-        "Running tests...", &cpackCommandLines, depends, 0,
-        /*uses_terminal*/true);
-    }
-
-  //Edit Cache
-  const char* editCacheTargetName = this->GetEditCacheTargetName();
-  if ( editCacheTargetName )
+    } else // TODO: This is a hack. Should be something to do with the
+           // generator
     {
-    cpackCommandLines.erase(cpackCommandLines.begin(),
-                            cpackCommandLines.end());
-    singleLine.erase(singleLine.begin(), singleLine.end());
-    depends.erase(depends.begin(), depends.end());
+      singleLine.push_back("$(ARGS)");
+    }
+    gti.CommandLines.push_back(singleLine);
+    targets.push_back(gti);
+  }
+}
+
+void cmGlobalGenerator::AddGlobalTarget_EditCache(
+  std::vector<GlobalTargetInfo>& targets)
+{
+  const char* editCacheTargetName = this->GetEditCacheTargetName();
+  if (editCacheTargetName) {
+    GlobalTargetInfo gti;
+    gti.Name = editCacheTargetName;
+    cmCustomCommandLine singleLine;
 
     // Use generator preference for the edit_cache rule if it is defined.
     std::string edit_cmd = this->GetEditCacheCommand();
-    if (!edit_cmd.empty())
-      {
+    if (!edit_cmd.empty()) {
       singleLine.push_back(edit_cmd);
       singleLine.push_back("-H$(CMAKE_SOURCE_DIR)");
       singleLine.push_back("-B$(CMAKE_BINARY_DIR)");
-      cpackCommandLines.push_back(singleLine);
-      (*targets)[editCacheTargetName] =
-        this->CreateGlobalTarget(
-          editCacheTargetName, "Running CMake cache editor...",
-          &cpackCommandLines, depends, 0, /*uses_terminal*/true);
-      }
-    else
-      {
-      singleLine.push_back(cmakeCommand);
+      gti.Message = "Running CMake cache editor...";
+      gti.UsesTerminal = true;
+      gti.CommandLines.push_back(singleLine);
+    } else {
+      singleLine.push_back(cmSystemTools::GetCMakeCommand());
       singleLine.push_back("-E");
       singleLine.push_back("echo");
       singleLine.push_back("No interactive CMake dialog available.");
-      cpackCommandLines.push_back(singleLine);
-      (*targets)[editCacheTargetName] =
-        this->CreateGlobalTarget(
-          editCacheTargetName,
-          "No interactive CMake dialog available...",
-          &cpackCommandLines, depends, 0, /*uses_terminal*/false);
-      }
+      gti.Message = "No interactive CMake dialog available...";
+      gti.UsesTerminal = false;
+      gti.CommandLines.push_back(singleLine);
     }
 
-  //Rebuild Cache
+    targets.push_back(gti);
+  }
+}
+
+void cmGlobalGenerator::AddGlobalTarget_RebuildCache(
+  std::vector<GlobalTargetInfo>& targets)
+{
   const char* rebuildCacheTargetName = this->GetRebuildCacheTargetName();
-  if ( rebuildCacheTargetName )
-    {
-    cpackCommandLines.erase(cpackCommandLines.begin(),
-                            cpackCommandLines.end());
-    singleLine.erase(singleLine.begin(), singleLine.end());
-    depends.erase(depends.begin(), depends.end());
-    singleLine.push_back(cmakeCommand);
+  if (rebuildCacheTargetName) {
+    GlobalTargetInfo gti;
+    gti.Name = rebuildCacheTargetName;
+    gti.Message = "Running CMake to regenerate build system...";
+    gti.UsesTerminal = true;
+    cmCustomCommandLine singleLine;
+    singleLine.push_back(cmSystemTools::GetCMakeCommand());
     singleLine.push_back("-H$(CMAKE_SOURCE_DIR)");
     singleLine.push_back("-B$(CMAKE_BINARY_DIR)");
-    cpackCommandLines.push_back(singleLine);
-    (*targets)[rebuildCacheTargetName] =
-      this->CreateGlobalTarget(
-        rebuildCacheTargetName, "Running CMake to regenerate build system...",
-        &cpackCommandLines, depends, 0, /*uses_terminal*/true);
-    }
+    gti.CommandLines.push_back(singleLine);
+    targets.push_back(gti);
+  }
+}
 
-  //Install
+void cmGlobalGenerator::AddGlobalTarget_Install(
+  std::vector<GlobalTargetInfo>& targets)
+{
+  cmMakefile* mf = this->Makefiles[0];
+  const char* cmakeCfgIntDir = this->GetCMakeCFGIntDir();
   bool skipInstallRules = mf->IsOn("CMAKE_SKIP_INSTALL_RULES");
-  if(this->InstallTargetEnabled && skipInstallRules)
-    {
-    mf->IssueMessage(cmake::WARNING,
-      "CMAKE_SKIP_INSTALL_RULES was enabled even though "
-      "installation rules have been specified");
-    }
-  else if(this->InstallTargetEnabled && !skipInstallRules)
-    {
-    if(!cmakeCfgIntDir || !*cmakeCfgIntDir || cmakeCfgIntDir[0] == '.')
-      {
+  if (this->InstallTargetEnabled && skipInstallRules) {
+    this->CMakeInstance->IssueMessage(
+      cmake::WARNING, "CMAKE_SKIP_INSTALL_RULES was enabled even though "
+                      "installation rules have been specified",
+      mf->GetBacktrace());
+  } else if (this->InstallTargetEnabled && !skipInstallRules) {
+    if (!cmakeCfgIntDir || !*cmakeCfgIntDir || cmakeCfgIntDir[0] == '.') {
       std::set<std::string>* componentsSet = &this->InstallComponents;
-      cpackCommandLines.erase(cpackCommandLines.begin(),
-        cpackCommandLines.end());
-      depends.erase(depends.begin(), depends.end());
       std::ostringstream ostr;
-      if (!componentsSet->empty())
-        {
+      if (!componentsSet->empty()) {
         ostr << "Available install components are: ";
         ostr << cmWrap('"', *componentsSet, '"', " ");
-        }
-      else
-        {
+      } else {
         ostr << "Only default component available";
-        }
-      singleLine.push_back(ostr.str());
-      (*targets)["list_install_components"]
-        = this->CreateGlobalTarget("list_install_components",
-          ostr.str().c_str(),
-          &cpackCommandLines, depends, 0, /*uses_terminal*/false);
       }
-    std::string cmd = cmakeCommand;
-    cpackCommandLines.erase(cpackCommandLines.begin(),
-      cpackCommandLines.end());
-    singleLine.erase(singleLine.begin(), singleLine.end());
-    depends.erase(depends.begin(), depends.end());
-    if ( this->GetPreinstallTargetName() )
-      {
-      depends.push_back(this->GetPreinstallTargetName());
-      }
-    else
-      {
+      GlobalTargetInfo gti;
+      gti.Name = "list_install_components";
+      gti.Message = ostr.str();
+      gti.UsesTerminal = false;
+      targets.push_back(gti);
+    }
+    std::string cmd = cmSystemTools::GetCMakeCommand();
+    GlobalTargetInfo gti;
+    gti.Name = this->GetInstallTargetName();
+    gti.Message = "Install the project...";
+    gti.UsesTerminal = true;
+    cmCustomCommandLine singleLine;
+    if (this->GetPreinstallTargetName()) {
+      gti.Depends.push_back(this->GetPreinstallTargetName());
+    } else {
       const char* noall =
         mf->GetDefinition("CMAKE_SKIP_INSTALL_ALL_DEPENDENCY");
-      if(!noall || cmSystemTools::IsOff(noall))
-        {
-        depends.push_back(this->GetAllTargetName());
-        }
+      if (!noall || cmSystemTools::IsOff(noall)) {
+        gti.Depends.push_back(this->GetAllTargetName());
       }
-    if(mf->GetDefinition("CMake_BINARY_DIR") &&
-       !mf->IsOn("CMAKE_CROSSCOMPILING"))
-      {
+    }
+    if (mf->GetDefinition("CMake_BINARY_DIR") &&
+        !mf->IsOn("CMAKE_CROSSCOMPILING")) {
       // We are building CMake itself.  We cannot use the original
       // executable to install over itself.  The generator will
       // automatically convert this name to the build-time location.
       cmd = "cmake";
-      }
+    }
     singleLine.push_back(cmd);
-    if ( cmakeCfgIntDir && *cmakeCfgIntDir && cmakeCfgIntDir[0] != '.' )
-      {
+    if (cmakeCfgIntDir && *cmakeCfgIntDir && cmakeCfgIntDir[0] != '.') {
       std::string cfgArg = "-DBUILD_TYPE=";
-      cfgArg += mf->GetDefinition("CMAKE_CFG_INTDIR");
-      singleLine.push_back(cfgArg);
+      bool useEPN = this->UseEffectivePlatformName(mf);
+      if (useEPN) {
+        cfgArg += "$(CONFIGURATION)";
+        singleLine.push_back(cfgArg);
+        cfgArg = "-DEFFECTIVE_PLATFORM_NAME=$(EFFECTIVE_PLATFORM_NAME)";
+      } else {
+        cfgArg += mf->GetDefinition("CMAKE_CFG_INTDIR");
       }
+      singleLine.push_back(cfgArg);
+    }
     singleLine.push_back("-P");
     singleLine.push_back("cmake_install.cmake");
-    cpackCommandLines.push_back(singleLine);
-    (*targets)[this->GetInstallTargetName()] =
-      this->CreateGlobalTarget(
-        this->GetInstallTargetName(), "Install the project...",
-        &cpackCommandLines, depends, 0, /*uses_terminal*/true);
+    gti.CommandLines.push_back(singleLine);
+    targets.push_back(gti);
 
     // install_local
-    if(const char* install_local = this->GetInstallLocalTargetName())
-      {
+    if (const char* install_local = this->GetInstallLocalTargetName()) {
+      gti.Name = install_local;
+      gti.Message = "Installing only the local directory...";
+      gti.UsesTerminal = true;
+      gti.CommandLines.clear();
+
       cmCustomCommandLine localCmdLine = singleLine;
 
-      localCmdLine.insert(localCmdLine.begin()+1,
-                                               "-DCMAKE_INSTALL_LOCAL_ONLY=1");
-      cpackCommandLines.erase(cpackCommandLines.begin(),
-                                                      cpackCommandLines.end());
-      cpackCommandLines.push_back(localCmdLine);
+      localCmdLine.insert(localCmdLine.begin() + 1,
+                          "-DCMAKE_INSTALL_LOCAL_ONLY=1");
 
-      (*targets)[install_local] =
-        this->CreateGlobalTarget(
-          install_local, "Installing only the local directory...",
-          &cpackCommandLines, depends, 0, /*uses_terminal*/true);
-      }
+      gti.CommandLines.push_back(localCmdLine);
+      targets.push_back(gti);
+    }
 
     // install_strip
     const char* install_strip = this->GetInstallStripTargetName();
-    if((install_strip !=0) && (mf->IsSet("CMAKE_STRIP")))
-      {
+    if ((install_strip != CM_NULLPTR) && (mf->IsSet("CMAKE_STRIP"))) {
+      gti.Name = install_strip;
+      gti.Message = "Installing the project stripped...";
+      gti.UsesTerminal = true;
+      gti.CommandLines.clear();
+
       cmCustomCommandLine stripCmdLine = singleLine;
 
-      stripCmdLine.insert(stripCmdLine.begin()+1,"-DCMAKE_INSTALL_DO_STRIP=1");
-      cpackCommandLines.erase(cpackCommandLines.begin(),
-        cpackCommandLines.end());
-      cpackCommandLines.push_back(stripCmdLine);
-
-      (*targets)[install_strip] =
-        this->CreateGlobalTarget(
-          install_strip, "Installing the project stripped...",
-          &cpackCommandLines, depends, 0, /*uses_terminal*/true);
-      }
+      stripCmdLine.insert(stripCmdLine.begin() + 1,
+                          "-DCMAKE_INSTALL_DO_STRIP=1");
+      gti.CommandLines.push_back(stripCmdLine);
+      targets.push_back(gti);
     }
+  }
 }
 
-//----------------------------------------------------------------------------
 const char* cmGlobalGenerator::GetPredefinedTargetsFolder()
 {
-  const char* prop =
-    this->GetCMakeInstance()->GetProperty("PREDEFINED_TARGETS_FOLDER");
+  const char* prop = this->GetCMakeInstance()->GetState()->GetGlobalProperty(
+    "PREDEFINED_TARGETS_FOLDER");
 
-  if (prop)
-    {
+  if (prop) {
     return prop;
-    }
+  }
 
   return "CMakePredefinedTargets";
 }
 
-//----------------------------------------------------------------------------
-bool cmGlobalGenerator::UseFolderProperty()
+bool cmGlobalGenerator::UseFolderProperty() const
 {
-  const char* prop = this->GetCMakeInstance()->GetProperty("USE_FOLDERS");
+  const char* prop =
+    this->GetCMakeInstance()->GetState()->GetGlobalProperty("USE_FOLDERS");
 
   // If this property is defined, let the setter turn this on or off...
   //
-  if (prop)
-    {
+  if (prop) {
     return cmSystemTools::IsOn(prop);
-    }
+  }
 
   // By default, this feature is OFF, since it is not supported in the
   // Visual Studio Express editions until VS11:
@@ -2428,133 +2458,82 @@ bool cmGlobalGenerator::UseFolderProperty()
   return false;
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::EnableMinGWLanguage(cmMakefile *mf)
-{
-  this->FindMakeProgram(mf);
-  std::string makeProgram = mf->GetRequiredDefinition("CMAKE_MAKE_PROGRAM");
-  std::vector<std::string> locations;
-  locations.push_back(cmSystemTools::GetProgramPath(makeProgram));
-  locations.push_back("/mingw/bin");
-  locations.push_back("c:/mingw/bin");
-  std::string tgcc = cmSystemTools::FindProgram("gcc", locations);
-  std::string gcc = "gcc.exe";
-  if(!tgcc.empty())
-    {
-    gcc = tgcc;
-    }
-  std::string tgxx = cmSystemTools::FindProgram("g++", locations);
-  std::string gxx = "g++.exe";
-  if(!tgxx.empty())
-    {
-    gxx = tgxx;
-    }
-  std::string trc = cmSystemTools::FindProgram("windres", locations);
-  std::string rc = "windres.exe";
-  if(!trc.empty())
-    {
-    rc = trc;
-    }
-  mf->AddDefinition("CMAKE_GENERATOR_CC", gcc.c_str());
-  mf->AddDefinition("CMAKE_GENERATOR_CXX", gxx.c_str());
-  mf->AddDefinition("CMAKE_GENERATOR_RC", rc.c_str());
-}
-
-//----------------------------------------------------------------------------
-cmTarget cmGlobalGenerator::CreateGlobalTarget(
-  const std::string& name, const char* message,
-  const cmCustomCommandLines* commandLines,
-  std::vector<std::string> depends,
-  const char* workingDirectory,
-  bool uses_terminal)
+cmTarget cmGlobalGenerator::CreateGlobalTarget(GlobalTargetInfo const& gti,
+                                               cmMakefile* mf)
 {
   // Package
-  cmTarget target;
-  target.GetProperties().SetCMakeInstance(this->CMakeInstance);
-  target.SetType(cmTarget::GLOBAL_TARGET, name);
-  target.SetProperty("EXCLUDE_FROM_ALL","TRUE");
+  cmTarget target(gti.Name, cmStateEnums::GLOBAL_TARGET,
+                  cmTarget::VisibilityNormal, mf);
+  target.SetProperty("EXCLUDE_FROM_ALL", "TRUE");
 
   std::vector<std::string> no_outputs;
   std::vector<std::string> no_byproducts;
   std::vector<std::string> no_depends;
   // Store the custom command in the target.
-  cmCustomCommand cc(0, no_outputs, no_byproducts, no_depends,
-                     *commandLines, 0, workingDirectory);
-  cc.SetUsesTerminal(uses_terminal);
+  cmCustomCommand cc(CM_NULLPTR, no_outputs, no_byproducts, no_depends,
+                     gti.CommandLines, CM_NULLPTR, gti.WorkingDir.c_str());
+  cc.SetUsesTerminal(gti.UsesTerminal);
   target.AddPostBuildCommand(cc);
-  target.SetProperty("EchoString", message);
-  std::vector<std::string>::iterator dit;
-  for ( dit = depends.begin(); dit != depends.end(); ++ dit )
-    {
+  if (!gti.Message.empty()) {
+    target.SetProperty("EchoString", gti.Message.c_str());
+  }
+  for (std::vector<std::string>::const_iterator dit = gti.Depends.begin();
+       dit != gti.Depends.end(); ++dit) {
     target.AddUtility(*dit);
-    }
+  }
 
   // Organize in the "predefined targets" folder:
   //
-  if (this->UseFolderProperty())
-    {
+  if (this->UseFolderProperty()) {
     target.SetProperty("FOLDER", this->GetPredefinedTargetsFolder());
-    }
+  }
 
   return target;
 }
 
-//----------------------------------------------------------------------------
-std::string
-cmGlobalGenerator::GenerateRuleFile(std::string const& output) const
+std::string cmGlobalGenerator::GenerateRuleFile(
+  std::string const& output) const
 {
   std::string ruleFile = output;
   ruleFile += ".rule";
   const char* dir = this->GetCMakeCFGIntDir();
-  if(dir && dir[0] == '$')
-    {
+  if (dir && dir[0] == '$') {
     cmSystemTools::ReplaceString(ruleFile, dir,
                                  cmake::GetCMakeFilesDirectory());
-    }
+  }
   return ruleFile;
 }
 
-//----------------------------------------------------------------------------
+bool cmGlobalGenerator::ShouldStripResourcePath(cmMakefile* mf) const
+{
+  return mf->PlatformIsAppleIos();
+}
+
 std::string cmGlobalGenerator::GetSharedLibFlagsForLanguage(
-                                                  std::string const& l) const
+  std::string const& l) const
 {
   std::map<std::string, std::string>::const_iterator it =
-                              this->LanguageToOriginalSharedLibFlags.find(l);
-  if(it != this->LanguageToOriginalSharedLibFlags.end())
-    {
+    this->LanguageToOriginalSharedLibFlags.find(l);
+  if (it != this->LanguageToOriginalSharedLibFlags.end()) {
     return it->second;
-    }
+  }
   return "";
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::AppendDirectoryForConfig(const std::string&,
-                                                 const std::string&,
-                                                 const std::string&,
-                                                 std::string&)
+void cmGlobalGenerator::AppendDirectoryForConfig(const std::string& /*unused*/,
+                                                 const std::string& /*unused*/,
+                                                 const std::string& /*unused*/,
+                                                 std::string& /*unused*/)
 {
   // Subclasses that support multiple configurations should implement
   // this method to append the subdirectory for the given build
   // configuration.
 }
 
-//----------------------------------------------------------------------------
 cmGlobalGenerator::TargetDependSet const&
-cmGlobalGenerator::GetTargetDirectDepends(cmTarget const& target)
+cmGlobalGenerator::GetTargetDirectDepends(cmGeneratorTarget const* target)
 {
-  return this->TargetDependencies[&target];
-}
-
-void cmGlobalGenerator::AddTarget(cmTarget* t)
-{
-  if(t->IsImported())
-    {
-    this->ImportedTargets[t->GetName()] = t;
-    }
-  else
-    {
-    this->TotalTargets[t->GetName()] = t;
-    }
+  return this->TargetDependencies[target];
 }
 
 bool cmGlobalGenerator::IsReservedTarget(std::string const& name)
@@ -2563,39 +2542,29 @@ bool cmGlobalGenerator::IsReservedTarget(std::string const& name)
   // by one or more of the cmake generators.
 
   // Adding additional targets to this list will require a policy!
-  const char* reservedTargets[] =
-  {
-    "all", "ALL_BUILD",
-    "help",
-    "install", "INSTALL",
-    "preinstall",
-    "clean",
-    "edit_cache",
-    "rebuild_cache",
-    "test", "RUN_TESTS",
-    "package", "PACKAGE",
-    "package_source",
-    "ZERO_CHECK"
+  const char* reservedTargets[] = {
+    "all",        "ALL_BUILD", "help",       "install",        "INSTALL",
+    "preinstall", "clean",     "edit_cache", "rebuild_cache",  "test",
+    "RUN_TESTS",  "package",   "PACKAGE",    "package_source", "ZERO_CHECK"
   };
 
-  return std::find(cmArrayBegin(reservedTargets),
-                   cmArrayEnd(reservedTargets), name)
-      != cmArrayEnd(reservedTargets);
+  return std::find(cmArrayBegin(reservedTargets), cmArrayEnd(reservedTargets),
+                   name) != cmArrayEnd(reservedTargets);
 }
 
 void cmGlobalGenerator::SetExternalMakefileProjectGenerator(
-                            cmExternalMakefileProjectGenerator *extraGenerator)
+  cmExternalMakefileProjectGenerator* extraGenerator)
 {
   this->ExtraGenerator = extraGenerator;
-  if (this->ExtraGenerator!=0)
-    {
+  if (this->ExtraGenerator != CM_NULLPTR) {
     this->ExtraGenerator->SetGlobalGenerator(this);
-    }
+  }
 }
 
 std::string cmGlobalGenerator::GetExtraGeneratorName() const
 {
-  return this->ExtraGenerator? this->ExtraGenerator->GetName() : std::string();
+  return this->ExtraGenerator ? this->ExtraGenerator->GetName()
+                              : std::string();
 }
 
 void cmGlobalGenerator::FileReplacedDuringGenerate(const std::string& filename)
@@ -2603,85 +2572,67 @@ void cmGlobalGenerator::FileReplacedDuringGenerate(const std::string& filename)
   this->FilesReplacedDuringGenerate.push_back(filename);
 }
 
-void
-cmGlobalGenerator
-::GetFilesReplacedDuringGenerate(std::vector<std::string>& filenames)
+void cmGlobalGenerator::GetFilesReplacedDuringGenerate(
+  std::vector<std::string>& filenames)
 {
   filenames.clear();
-  std::copy(
-    this->FilesReplacedDuringGenerate.begin(),
-    this->FilesReplacedDuringGenerate.end(),
-    std::back_inserter(filenames));
+  std::copy(this->FilesReplacedDuringGenerate.begin(),
+            this->FilesReplacedDuringGenerate.end(),
+            std::back_inserter(filenames));
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::GetTargetSets(TargetDependSet& projectTargets,
                                       TargetDependSet& originalTargets,
                                       cmLocalGenerator* root,
                                       GeneratorVector const& generators)
 {
   // loop over all local generators
-  for(std::vector<cmLocalGenerator*>::const_iterator i = generators.begin();
-      i != generators.end(); ++i)
-    {
+  for (std::vector<cmLocalGenerator*>::const_iterator i = generators.begin();
+       i != generators.end(); ++i) {
     // check to make sure generator is not excluded
-    if(this->IsExcluded(root, *i))
-      {
+    if (this->IsExcluded(root, *i)) {
       continue;
-      }
-    cmMakefile* mf = (*i)->GetMakefile();
+    }
     // Get the targets in the makefile
-    cmTargets &tgts = mf->GetTargets();
+    std::vector<cmGeneratorTarget*> tgts = (*i)->GetGeneratorTargets();
     // loop over all the targets
-    for (cmTargets::iterator l = tgts.begin(); l != tgts.end(); ++l)
-      {
-      cmTarget* target = &l->second;
-      if(this->IsRootOnlyTarget(target) &&
-         target->GetMakefile() != root->GetMakefile())
-        {
+    for (std::vector<cmGeneratorTarget*>::iterator l = tgts.begin();
+         l != tgts.end(); ++l) {
+      cmGeneratorTarget* target = *l;
+      if (this->IsRootOnlyTarget(target) &&
+          target->GetLocalGenerator() != root) {
         continue;
-        }
+      }
       // put the target in the set of original targets
       originalTargets.insert(target);
       // Get the set of targets that depend on target
       this->AddTargetDepends(target, projectTargets);
-      }
     }
+  }
 }
 
-//----------------------------------------------------------------------------
-bool cmGlobalGenerator::IsRootOnlyTarget(cmTarget* target) const
+bool cmGlobalGenerator::IsRootOnlyTarget(cmGeneratorTarget* target) const
 {
-  return (target->GetType() == cmTarget::GLOBAL_TARGET ||
+  return (target->GetType() == cmStateEnums::GLOBAL_TARGET ||
           target->GetName() == this->GetAllTargetName());
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::AddTargetDepends(cmTarget const* target,
+void cmGlobalGenerator::AddTargetDepends(cmGeneratorTarget const* target,
                                          TargetDependSet& projectTargets)
 {
   // add the target itself
-  if(projectTargets.insert(target).second)
-    {
+  if (projectTargets.insert(target).second) {
     // This is the first time we have encountered the target.
     // Recursively follow its dependencies.
-    TargetDependSet const& ts = this->GetTargetDirectDepends(*target);
-    for(TargetDependSet::const_iterator i = ts.begin(); i != ts.end(); ++i)
-      {
-      cmTarget const* dtarget = *i;
-      this->AddTargetDepends(dtarget, projectTargets);
-      }
+    TargetDependSet const& ts = this->GetTargetDirectDepends(target);
+    for (TargetDependSet::const_iterator i = ts.begin(); i != ts.end(); ++i) {
+      this->AddTargetDepends(*i, projectTargets);
     }
+  }
 }
 
-
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::AddToManifest(const std::string& config,
-                                      std::string const& f)
+void cmGlobalGenerator::AddToManifest(std::string const& f)
 {
-  // Add to the main manifest for this configuration.
-  this->TargetManifest[config].insert(f);
-
   // Add to the content listing for the file's directory.
   std::string dir = cmSystemTools::GetFilenamePath(f);
   std::string file = cmSystemTools::GetFilenameName(f);
@@ -2690,68 +2641,54 @@ void cmGlobalGenerator::AddToManifest(const std::string& config,
   dc.All.insert(file);
 }
 
-//----------------------------------------------------------------------------
-std::set<std::string> const&
-cmGlobalGenerator::GetDirectoryContent(std::string const& dir, bool needDisk)
+std::set<std::string> const& cmGlobalGenerator::GetDirectoryContent(
+  std::string const& dir, bool needDisk)
 {
   DirectoryContent& dc = this->DirectoryContentMap[dir];
-  if(needDisk)
-    {
+  if (needDisk) {
     long mt = cmSystemTools::ModifiedTime(dir);
-    if (mt != dc.LastDiskTime)
-      {
+    if (mt != dc.LastDiskTime) {
       // Reset to non-loaded directory content.
       dc.All = dc.Generated;
 
       // Load the directory content from disk.
       cmsys::Directory d;
-      if(d.Load(dir))
-        {
+      if (d.Load(dir)) {
         unsigned long n = d.GetNumberOfFiles();
-        for(unsigned long i = 0; i < n; ++i)
-          {
+        for (unsigned long i = 0; i < n; ++i) {
           const char* f = d.GetFile(i);
-          if(strcmp(f, ".") != 0 && strcmp(f, "..") != 0)
-            {
+          if (strcmp(f, ".") != 0 && strcmp(f, "..") != 0) {
             dc.All.insert(f);
-            }
           }
         }
-      dc.LastDiskTime = mt;
       }
+      dc.LastDiskTime = mt;
     }
+  }
   return dc.All;
 }
 
-//----------------------------------------------------------------------------
-void
-cmGlobalGenerator::AddRuleHash(const std::vector<std::string>& outputs,
-                               std::string const& content)
+void cmGlobalGenerator::AddRuleHash(const std::vector<std::string>& outputs,
+                                    std::string const& content)
 {
 #if defined(CMAKE_BUILD_WITH_CMAKE)
   // Ignore if there are no outputs.
-  if(outputs.empty())
-    {
+  if (outputs.empty()) {
     return;
-    }
+  }
 
   // Compute a hash of the rule.
   RuleHash hash;
   {
-  unsigned char const* data =
-    reinterpret_cast<unsigned char const*>(content.c_str());
-  int length = static_cast<int>(content.length());
-  cmsysMD5* sum = cmsysMD5_New();
-  cmsysMD5_Initialize(sum);
-  cmsysMD5_Append(sum, data, length);
-  cmsysMD5_FinalizeHex(sum, hash.Data);
-  cmsysMD5_Delete(sum);
+    cmCryptoHash md5(cmCryptoHash::AlgoMD5);
+    std::string const md5_hex = md5.HashString(content);
+    memcpy(hash.Data, md5_hex.c_str(), 32);
   }
 
   // Shorten the output name (in expected use case).
-  cmLocalGenerator* lg = this->GetLocalGenerators()[0];
-  std::string fname = lg->Convert(outputs[0],
-                                  cmLocalGenerator::HOME_OUTPUT);
+  cmOutputConverter converter(this->GetMakefiles()[0]->GetStateSnapshot());
+  std::string fname = converter.ConvertToRelativePath(
+    this->GetMakefiles()[0]->GetState()->GetBinaryDirectory(), outputs[0]);
 
   // Associate the hash with this output.
   this->RuleHashes[fname] = hash;
@@ -2761,7 +2698,6 @@ cmGlobalGenerator::AddRuleHash(const std::vector<std::string>& outputs,
 #endif
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::CheckRuleHashes()
 {
 #if defined(CMAKE_BUILD_WITH_CMAKE)
@@ -2774,116 +2710,99 @@ void cmGlobalGenerator::CheckRuleHashes()
 #endif
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::CheckRuleHashes(std::string const& pfile,
                                         std::string const& home)
 {
 #if defined(_WIN32) || defined(__CYGWIN__)
   cmsys::ifstream fin(pfile.c_str(), std::ios::in | std::ios::binary);
 #else
-  cmsys::ifstream fin(pfile.c_str(), std::ios::in);
+  cmsys::ifstream fin(pfile.c_str());
 #endif
-  if(!fin)
-    {
+  if (!fin) {
     return;
-    }
+  }
   std::string line;
   std::string fname;
-  while(cmSystemTools::GetLineFromStream(fin, line))
-    {
+  while (cmSystemTools::GetLineFromStream(fin, line)) {
     // Line format is a 32-byte hex string followed by a space
     // followed by a file name (with no escaping).
 
     // Skip blank and comment lines.
-    if(line.size() < 34 || line[0] == '#')
-      {
+    if (line.size() < 34 || line[0] == '#') {
       continue;
-      }
+    }
 
     // Get the filename.
-    fname = line.substr(33, line.npos);
+    fname = line.substr(33);
 
     // Look for a hash for this file's rule.
     std::map<std::string, RuleHash>::const_iterator rhi =
       this->RuleHashes.find(fname);
-    if(rhi != this->RuleHashes.end())
-      {
+    if (rhi != this->RuleHashes.end()) {
       // Compare the rule hash in the file to that we were given.
-      if(strncmp(line.c_str(), rhi->second.Data, 32) != 0)
-        {
+      if (strncmp(line.c_str(), rhi->second.Data, 32) != 0) {
         // The rule has changed.  Delete the output so it will be
         // built again.
         fname = cmSystemTools::CollapseFullPath(fname, home.c_str());
         cmSystemTools::RemoveFile(fname);
-        }
       }
-    else
-      {
+    } else {
       // We have no hash for a rule previously listed.  This may be a
       // case where a user has turned off a build option and might
       // want to turn it back on later, so do not delete the file.
       // Instead, we keep the rule hash as long as the file exists so
       // that if the feature is turned back on and the rule has
       // changed the file is still rebuilt.
-      std::string fpath =
-        cmSystemTools::CollapseFullPath(fname, home.c_str());
-      if(cmSystemTools::FileExists(fpath.c_str()))
-        {
+      std::string fpath = cmSystemTools::CollapseFullPath(fname, home.c_str());
+      if (cmSystemTools::FileExists(fpath.c_str())) {
         RuleHash hash;
         strncpy(hash.Data, line.c_str(), 32);
         this->RuleHashes[fname] = hash;
-        }
       }
     }
+  }
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::WriteRuleHashes(std::string const& pfile)
 {
   // Now generate a new persistence file with the current hashes.
-  if(this->RuleHashes.empty())
-    {
+  if (this->RuleHashes.empty()) {
     cmSystemTools::RemoveFile(pfile);
-    }
-  else
-    {
+  } else {
     cmGeneratedFileStream fout(pfile.c_str());
     fout << "# Hashes of file build rules.\n";
-    for(std::map<std::string, RuleHash>::const_iterator
-          rhi = this->RuleHashes.begin(); rhi != this->RuleHashes.end(); ++rhi)
-      {
+    for (std::map<std::string, RuleHash>::const_iterator rhi =
+           this->RuleHashes.begin();
+         rhi != this->RuleHashes.end(); ++rhi) {
       fout.write(rhi->second.Data, 32);
       fout << " " << rhi->first << "\n";
-      }
     }
+  }
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::WriteSummary()
 {
-  cmMakefile* mf = this->LocalGenerators[0]->GetMakefile();
-
   // Record all target directories in a central location.
-  std::string fname = mf->GetHomeOutputDirectory();
+  std::string fname = this->CMakeInstance->GetHomeOutputDirectory();
   fname += cmake::GetCMakeFilesDirectory();
   fname += "/TargetDirectories.txt";
   cmGeneratedFileStream fout(fname.c_str());
 
-  // Generate summary information files for each target.
-  for(TargetMap::const_iterator ti =
-        this->TotalTargets.begin(); ti != this->TotalTargets.end(); ++ti)
-    {
-    if ((ti->second)->GetType() == cmTarget::INTERFACE_LIBRARY)
-      {
-      continue;
+  for (unsigned int i = 0; i < this->LocalGenerators.size(); ++i) {
+    std::vector<cmGeneratorTarget*> tgts =
+      this->LocalGenerators[i]->GetGeneratorTargets();
+    for (std::vector<cmGeneratorTarget*>::iterator it = tgts.begin();
+         it != tgts.end(); ++it) {
+      if ((*it)->GetType() == cmStateEnums::INTERFACE_LIBRARY) {
+        continue;
       }
-    this->WriteSummary(ti->second);
-    fout << ti->second->GetSupportDirectory() << "\n";
+      this->WriteSummary(*it);
+      fout << (*it)->GetSupportDirectory() << "\n";
     }
+  }
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::WriteSummary(cmTarget* target)
+void cmGlobalGenerator::WriteSummary(cmGeneratorTarget* target)
 {
   // Place the labels file in a per-target support directory.
   std::string dir = target->GetSupportDirectory();
@@ -2893,16 +2812,12 @@ void cmGlobalGenerator::WriteSummary(cmTarget* target)
 
 #ifdef CMAKE_BUILD_WITH_CMAKE
   // Check whether labels are enabled for this target.
-  if(const char* value = target->GetProperty("LABELS"))
-    {
+  if (const char* value = target->GetProperty("LABELS")) {
     Json::Value lj_root(Json::objectValue);
-    Json::Value& lj_target =
-      lj_root["target"] = Json::objectValue;
+    Json::Value& lj_target = lj_root["target"] = Json::objectValue;
     lj_target["name"] = target->GetName();
-    Json::Value& lj_target_labels =
-      lj_target["labels"] = Json::arrayValue;
-    Json::Value& lj_sources =
-      lj_root["sources"] = Json::arrayValue;
+    Json::Value& lj_target_labels = lj_target["labels"] = Json::arrayValue;
+    Json::Value& lj_sources = lj_root["sources"] = Json::arrayValue;
 
     cmSystemTools::MakeDirectory(dir.c_str());
     cmGeneratedFileStream fout(file.c_str());
@@ -2911,69 +2826,60 @@ void cmGlobalGenerator::WriteSummary(cmTarget* target)
     // these labels.
     std::vector<std::string> labels;
     cmSystemTools::ExpandListArgument(value, labels);
-    if(!labels.empty())
-      {
+    if (!labels.empty()) {
       fout << "# Target labels\n";
-      for(std::vector<std::string>::const_iterator li = labels.begin();
-          li != labels.end(); ++li)
-        {
+      for (std::vector<std::string>::const_iterator li = labels.begin();
+           li != labels.end(); ++li) {
         fout << " " << *li << "\n";
         lj_target_labels.append(*li);
-        }
       }
+    }
 
     // List the source files with any per-source labels.
     fout << "# Source files and their labels\n";
     std::vector<cmSourceFile*> sources;
     std::vector<std::string> configs;
-    target->GetMakefile()->GetConfigurations(configs);
-    if (configs.empty())
-      {
+    target->Target->GetMakefile()->GetConfigurations(configs);
+    if (configs.empty()) {
       configs.push_back("");
-      }
-    for(std::vector<std::string>::const_iterator ci = configs.begin();
-        ci != configs.end(); ++ci)
-      {
+    }
+    for (std::vector<std::string>::const_iterator ci = configs.begin();
+         ci != configs.end(); ++ci) {
       target->GetSourceFiles(sources, *ci);
-      }
-    std::vector<cmSourceFile*>::const_iterator sourcesEnd
-        = cmRemoveDuplicates(sources);
-    for(std::vector<cmSourceFile*>::const_iterator si = sources.begin();
-        si != sourcesEnd; ++si)
-      {
+    }
+    std::vector<cmSourceFile*>::const_iterator sourcesEnd =
+      cmRemoveDuplicates(sources);
+    for (std::vector<cmSourceFile*>::const_iterator si = sources.begin();
+         si != sourcesEnd; ++si) {
       Json::Value& lj_source = lj_sources.append(Json::objectValue);
       cmSourceFile* sf = *si;
       std::string const& sfp = sf->GetFullPath();
       fout << sfp << "\n";
       lj_source["file"] = sfp;
-      if(const char* svalue = sf->GetProperty("LABELS"))
-        {
+      if (const char* svalue = sf->GetProperty("LABELS")) {
         labels.clear();
-        Json::Value& lj_source_labels =
-          lj_source["labels"] = Json::arrayValue;
+        Json::Value& lj_source_labels = lj_source["labels"] = Json::arrayValue;
         cmSystemTools::ExpandListArgument(svalue, labels);
-        for(std::vector<std::string>::const_iterator li = labels.begin();
-            li != labels.end(); ++li)
-          {
+        for (std::vector<std::string>::const_iterator li = labels.begin();
+             li != labels.end(); ++li) {
           fout << " " << *li << "\n";
           lj_source_labels.append(*li);
-          }
         }
       }
+    }
     cmGeneratedFileStream json_fout(json_file.c_str());
     json_fout << lj_root;
-    }
-  else
+  } else
 #endif
-    {
+  {
     cmSystemTools::RemoveFile(file);
     cmSystemTools::RemoveFile(json_file);
-    }
+  }
 }
 
-//----------------------------------------------------------------------------
 // static
-std::string cmGlobalGenerator::EscapeJSON(const std::string& s) {
+std::string cmGlobalGenerator::EscapeJSON(const std::string& s)
+{
   std::string result;
   for (std::string::size_type i = 0; i < s.size(); ++i) {
     if (s[i] == '"' || s[i] == '\\') {
@@ -2984,120 +2890,72 @@ std::string cmGlobalGenerator::EscapeJSON(const std::string& s) {
   return result;
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::SetFilenameTargetDepends(cmSourceFile* sf,
-                                              std::set<cmTarget const*> tgts)
+void cmGlobalGenerator::SetFilenameTargetDepends(
+  cmSourceFile* sf, std::set<cmGeneratorTarget const*> const& tgts)
 {
   this->FilenameTargetDepends[sf] = tgts;
 }
 
-//----------------------------------------------------------------------------
-std::set<cmTarget const*> const&
-cmGlobalGenerator::GetFilenameTargetDepends(cmSourceFile* sf) const {
+std::set<cmGeneratorTarget const*> const&
+cmGlobalGenerator::GetFilenameTargetDepends(cmSourceFile* sf) const
+{
   return this->FilenameTargetDepends[sf];
 }
 
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::CreateEvaluationSourceFiles(
-                                              std::string const& config) const
+  std::string const& config) const
 {
-  for(std::vector<cmGeneratorExpressionEvaluationFile*>::const_iterator
-      li = this->EvaluationFiles.begin();
-      li != this->EvaluationFiles.end();
-      ++li)
-    {
-    (*li)->CreateOutputFile(config);
-    }
+  unsigned int i;
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
+    this->LocalGenerators[i]->CreateEvaluationFileOutputs(config);
+  }
 }
 
-//----------------------------------------------------------------------------
-void cmGlobalGenerator::AddEvaluationFile(const std::string &inputFile,
-                    cmsys::auto_ptr<cmCompiledGeneratorExpression> outputExpr,
-                    cmMakefile *makefile,
-                    cmsys::auto_ptr<cmCompiledGeneratorExpression> condition,
-                    bool inputIsContent)
-{
-  this->EvaluationFiles.push_back(
-              new cmGeneratorExpressionEvaluationFile(inputFile, outputExpr,
-                                                      makefile, condition,
-                                                      inputIsContent));
-}
-
-//----------------------------------------------------------------------------
 void cmGlobalGenerator::ProcessEvaluationFiles()
 {
   std::vector<std::string> generatedFiles;
-  for(std::vector<cmGeneratorExpressionEvaluationFile*>::const_iterator
-      li = this->EvaluationFiles.begin();
-      li != this->EvaluationFiles.end();
-      ++li)
-    {
-    (*li)->Generate();
-    if (cmSystemTools::GetFatalErrorOccured())
-      {
-      return;
-      }
-    std::vector<std::string> files = (*li)->GetFiles();
-    std::sort(files.begin(), files.end());
-
-    std::vector<std::string> intersection;
-    std::set_intersection(files.begin(), files.end(),
-                          generatedFiles.begin(), generatedFiles.end(),
-                          std::back_inserter(intersection));
-    if (!intersection.empty())
-      {
-      cmSystemTools::Error("Files to be generated by multiple different "
-        "commands: ", cmWrap('"', intersection, '"', " ").c_str());
-      return;
-      }
-
-        generatedFiles.insert(generatedFiles.end(),
-                              files.begin(), files.end());
-    std::vector<std::string>::iterator newIt =
-        generatedFiles.end() - files.size();
-    std::inplace_merge(generatedFiles.begin(), newIt, generatedFiles.end());
-    }
+  unsigned int i;
+  for (i = 0; i < this->LocalGenerators.size(); ++i) {
+    this->LocalGenerators[i]->ProcessEvaluationFiles(generatedFiles);
+  }
 }
 
-//----------------------------------------------------------------------------
-std::string cmGlobalGenerator::ExpandCFGIntDir(const std::string& str,
-                            const std::string& /*config*/) const
+std::string cmGlobalGenerator::ExpandCFGIntDir(
+  const std::string& str, const std::string& /*config*/) const
 {
   return str;
 }
 
-//----------------------------------------------------------------------------
 bool cmGlobalGenerator::GenerateCPackPropertiesFile()
 {
   cmake::InstalledFilesMap const& installedFiles =
     this->CMakeInstance->GetInstalledFiles();
 
-  cmMakefile* mf = this->LocalGenerators[0]->GetMakefile();
+  cmLocalGenerator* lg = this->LocalGenerators[0];
+  cmMakefile* mf = lg->GetMakefile();
 
   std::vector<std::string> configs;
   std::string config = mf->GetConfigurations(configs, false);
 
-  std::string path = this->CMakeInstance->GetStartOutputDirectory();
+  std::string path = this->CMakeInstance->GetHomeOutputDirectory();
   path += "/CPackProperties.cmake";
 
-  if(!cmSystemTools::FileExists(path.c_str()) && installedFiles.empty())
-    {
-      return true;
-    }
+  if (!cmSystemTools::FileExists(path.c_str()) && installedFiles.empty()) {
+    return true;
+  }
 
   cmGeneratedFileStream file(path.c_str());
   file << "# CPack properties\n";
 
-  for(cmake::InstalledFilesMap::const_iterator i = installedFiles.begin();
-    i != installedFiles.end(); ++i)
-    {
+  for (cmake::InstalledFilesMap::const_iterator i = installedFiles.begin();
+       i != installedFiles.end(); ++i) {
     cmInstalledFile const& installedFile = i->second;
 
-    cmCPackPropertiesGenerator cpackPropertiesGenerator(
-      mf, installedFile, configs);
+    cmCPackPropertiesGenerator cpackPropertiesGenerator(lg, installedFile,
+                                                        configs);
 
     cpackPropertiesGenerator.Generate(file, config, configs);
-    }
+  }
 
   return true;
 }

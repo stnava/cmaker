@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindGLUT
 # --------
@@ -30,19 +33,6 @@
 #   GLUT_glut_LIBRARY = the full path to the glut library.
 #   GLUT_Xmu_LIBRARY  = the full path to the Xmu library.
 #   GLUT_Xi_LIBRARY   = the full path to the Xi Library.
-
-#=============================================================================
-# Copyright 2001-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 if (WIN32)
   find_path( GLUT_INCLUDE_DIR NAMES GL/glut.h
@@ -130,10 +120,12 @@ if (GLUT_FOUND)
   # If not, we need some way to figure out what platform we are on.
   set( GLUT_LIBRARIES
     ${GLUT_glut_LIBRARY}
-    ${GLUT_Xmu_LIBRARY}
-    ${GLUT_Xi_LIBRARY}
-    ${GLUT_cocoa_LIBRARY}
     )
+  foreach(v GLUT_Xmu_LIBRARY GLUT_Xi_LIBRARY GLUT_cocoa_LIBRARY)
+    if(${v})
+      list(APPEND GLUT_LIBRARIES ${${v}})
+    endif()
+  endforeach()
 
   if(NOT TARGET GLUT::GLUT)
     add_library(GLUT::GLUT UNKNOWN IMPORTED)

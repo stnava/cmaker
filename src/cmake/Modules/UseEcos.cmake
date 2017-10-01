@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # UseEcos
 # -------
@@ -24,19 +27,6 @@
 # ::
 #
 #   ECOS_ADD_TARGET_LIB
-
-#=============================================================================
-# Copyright 2006-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # first check that ecosconfig is available
 find_program(ECOSCONFIG_EXECUTABLE NAMES ecosconfig)
@@ -194,8 +184,8 @@ macro(ECOS_ADD_EXECUTABLE _exe_NAME )
 # when using nmake makefiles, the custom buildtype supresses the default cl.exe flags
 # and the rules for creating objects are adjusted for gcc
    set(CMAKE_BUILD_TYPE CUSTOM_ECOS_BUILD)
-   set(CMAKE_C_COMPILE_OBJECT     "<CMAKE_C_COMPILER>   <FLAGS> -o <OBJECT> -c <SOURCE>")
-   set(CMAKE_CXX_COMPILE_OBJECT   "<CMAKE_CXX_COMPILER> <FLAGS> -o <OBJECT> -c <SOURCE>")
+   set(CMAKE_C_COMPILE_OBJECT     "<CMAKE_C_COMPILER>   <DEFINES> <INCLUDES> <FLAGS> -o <OBJECT> -c <SOURCE>")
+   set(CMAKE_CXX_COMPILE_OBJECT   "<CMAKE_CXX_COMPILER> <DEFINES> <INCLUDES> <FLAGS> -o <OBJECT> -c <SOURCE>")
 # special link commands for ecos-executables
    set(CMAKE_CXX_LINK_EXECUTABLE  "<CMAKE_CXX_COMPILER> <CMAKE_CXX_LINK_FLAGS> <OBJECTS>  -o <TARGET> ${_ecos_EXTRA_LIBS} -nostdlib  -nostartfiles -L${CMAKE_CURRENT_BINARY_DIR}/ecos/install/lib -Ttarget.ld ${ECOS_LD_MCPU}")
    set(CMAKE_C_LINK_EXECUTABLE    "<CMAKE_C_COMPILER>   <CMAKE_C_LINK_FLAGS>   <OBJECTS>  -o <TARGET> ${_ecos_EXTRA_LIBS} -nostdlib  -nostartfiles -L${CMAKE_CURRENT_BINARY_DIR}/ecos/install/lib -Ttarget.ld ${ECOS_LD_MCPU}")

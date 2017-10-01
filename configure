@@ -1,9 +1,31 @@
 #!/bin/bash
 CXX_STD=CXX11
 JTHREADS=2
-cp src/cmake/Utilities/NoDartCoverage src/cmake/Utilities/.NoDartCoverage
-cp src/cmake/Utilities/cmexpat/NoDartCoverage src/cmake/Utilities/cmexpat/.NoDartCoverage
-cp src/cmake/Utilities/cmzlib/NoDartCoverage src/cmake/Utilities/cmzlib/.NoDartCoverage
+
+# rm -rf inst/bin
+#####################
+# Download CMake Source
+#####################
+cmake_file="cmake-3.9.3.tar.gz"
+str="download.file('https://cmake.org/files/v3.9/"${cmake_file}
+str=${str}"', destfile='"${cmake_file}"')"
+Rscript -e "${str}"
+
+#####################
+# Unzip Cmake
+#####################
+str="utils::untar('"${cmake_file}
+str=${str}"', exdir = 'src');"
+str=${str}"bn=sub('[.]tar[.]gz$', '',"
+str=${str}" '"${cmake_file}"');"
+str=${str}"file.rename(file.path('src',"
+str=${str}"bn), 'src/cmake');"
+Rscript -e "${str}"
+rm -f ${cmake_file}
+
+cp -f src/cmake/Utilities/NoDartCoverage src/cmake/Utilities/.NoDartCoverage
+cp -f src/cmake/Utilities/cmexpat/NoDartCoverage src/cmake/Utilities/cmexpat/.NoDartCoverage
+cp -f src/cmake/Utilities/cmzlib/NoDartCoverage src/cmake/Utilities/cmzlib/.NoDartCoverage
 cd ./src/cmake
 if [[ ! -s "${R_PACKAGE_DIR}/cmake/" ]] ; then
   mkdir "${R_PACKAGE_DIR}/cmake/"

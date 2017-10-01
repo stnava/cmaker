@@ -1,94 +1,64 @@
-#.rst:
-# CTest
-# -----
-#
-# Configure a project for testing with CTest/CDash
-#
-# Include this module in the top CMakeLists.txt file of a project to
-# enable testing with CTest and dashboard submissions to CDash:
-#
-# ::
-#
-#    project(MyProject)
-#    ...
-#    include(CTest)
-#
-# The module automatically creates a BUILD_TESTING option that selects
-# whether to enable testing support (ON by default).  After including
-# the module, use code like
-#
-# ::
-#
-#    if(BUILD_TESTING)
-#      # ... CMake code to create tests ...
-#    endif()
-#
-# to creating tests when testing is enabled.
-#
-# To enable submissions to a CDash server, create a CTestConfig.cmake
-# file at the top of the project with content such as
-#
-# ::
-#
-#    set(CTEST_PROJECT_NAME "MyProject")
-#    set(CTEST_NIGHTLY_START_TIME "01:00:00 UTC")
-#    set(CTEST_DROP_METHOD "http")
-#    set(CTEST_DROP_SITE "my.cdash.org")
-#    set(CTEST_DROP_LOCATION "/submit.php?project=MyProject")
-#    set(CTEST_DROP_SITE_CDASH TRUE)
-#
-# (the CDash server can provide the file to a project administrator who
-# configures 'MyProject').  Settings in the config file are shared by
-# both this CTest module and the CTest command-line tool's dashboard
-# script mode (ctest -S).
-#
-# While building a project for submission to CDash, CTest scans the
-# build output for errors and warnings and reports them with surrounding
-# context from the build log.  This generic approach works for all build
-# tools, but does not give details about the command invocation that
-# produced a given problem.  One may get more detailed reports by adding
-#
-# ::
-#
-#    set(CTEST_USE_LAUNCHERS 1)
-#
-# to the CTestConfig.cmake file.  When this option is enabled, the CTest
-# module tells CMake's Makefile generators to invoke every command in
-# the generated build system through a CTest launcher program.
-# (Currently the CTEST_USE_LAUNCHERS option is ignored on non-Makefile
-# generators.) During a manual build each launcher transparently runs
-# the command it wraps.  During a CTest-driven build for submission to
-# CDash each launcher reports detailed information when its command
-# fails or warns.  (Setting CTEST_USE_LAUNCHERS in CTestConfig.cmake is
-# convenient, but also adds the launcher overhead even for manual
-# builds.  One may instead set it in a CTest dashboard script and add it
-# to the CMake cache for the build tree.)
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2005-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
+#[=======================================================================[.rst:
+CTest
+-----
+
+Configure a project for testing with CTest/CDash
+
+Include this module in the top CMakeLists.txt file of a project to
+enable testing with CTest and dashboard submissions to CDash::
+
+  project(MyProject)
+  ...
+  include(CTest)
+
+The module automatically creates a ``BUILD_TESTING`` option that selects
+whether to enable testing support (``ON`` by default).  After including
+the module, use code like::
+
+  if(BUILD_TESTING)
+    # ... CMake code to create tests ...
+  endif()
+
+to creating tests when testing is enabled.
+
+To enable submissions to a CDash server, create a ``CTestConfig.cmake``
+file at the top of the project with content such as::
+
+  set(CTEST_PROJECT_NAME "MyProject")
+  set(CTEST_NIGHTLY_START_TIME "01:00:00 UTC")
+  set(CTEST_DROP_METHOD "http")
+  set(CTEST_DROP_SITE "my.cdash.org")
+  set(CTEST_DROP_LOCATION "/submit.php?project=MyProject")
+  set(CTEST_DROP_SITE_CDASH TRUE)
+
+(the CDash server can provide the file to a project administrator who
+configures ``MyProject``).  Settings in the config file are shared by
+both this ``CTest`` module and the :manual:`ctest(1)` command-line
+:ref:`Dashboard Client` mode (``ctest -S``).
+
+While building a project for submission to CDash, CTest scans the
+build output for errors and warnings and reports them with surrounding
+context from the build log.  This generic approach works for all build
+tools, but does not give details about the command invocation that
+produced a given problem.  One may get more detailed reports by setting
+the :variable:`CTEST_USE_LAUNCHERS` variable::
+
+  set(CTEST_USE_LAUNCHERS 1)
+
+in the ``CTestConfig.cmake`` file.
+#]=======================================================================]
 
 option(BUILD_TESTING "Build the testing tree." ON)
 
 # function to turn generator name into a version string
-# like vs7 vs71 vs8 vs9
+# like vs8 vs9
 function(GET_VS_VERSION_STRING generator var)
   string(REGEX REPLACE "Visual Studio ([0-9][0-9]?)($|.*)" "\\1"
     NUMBER "${generator}")
-  if("${generator}" MATCHES "Visual Studio 7 .NET 2003")
-    set(ver_string "vs71")
-  else()
     set(ver_string "vs${NUMBER}")
-  endif()
   set(${var} ${ver_string} PARENT_SCOPE)
 endfunction()
 
@@ -240,19 +210,16 @@ if(BUILD_TESTING)
       set(BUILD_NAME_SYSTEM_NAME "Win32")
     endif()
     if(UNIX OR BORLAND)
-      get_filename_component(DART_CXX_NAME
-        "${CMAKE_CXX_COMPILER}" ${DART_NAME_COMPONENT})
+      get_filename_component(DART_COMPILER_NAME
+        "${DART_COMPILER}" ${DART_NAME_COMPONENT})
     else()
-      get_filename_component(DART_CXX_NAME
+      get_filename_component(DART_COMPILER_NAME
         "${CMAKE_MAKE_PROGRAM}" ${DART_NAME_COMPONENT})
     endif()
-    if(DART_CXX_NAME MATCHES "msdev")
-      set(DART_CXX_NAME "vs60")
+    if(DART_COMPILER_NAME MATCHES "devenv")
+      GET_VS_VERSION_STRING("${CMAKE_GENERATOR}" DART_COMPILER_NAME)
     endif()
-    if(DART_CXX_NAME MATCHES "devenv")
-      GET_VS_VERSION_STRING("${CMAKE_GENERATOR}" DART_CXX_NAME)
-    endif()
-    set(BUILDNAME "${BUILD_NAME_SYSTEM_NAME}-${DART_CXX_NAME}")
+    set(BUILDNAME "${BUILD_NAME_SYSTEM_NAME}-${DART_COMPILER_NAME}")
   endif()
 
   # the build command

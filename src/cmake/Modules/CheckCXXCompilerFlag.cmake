@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # CheckCXXCompilerFlag
 # --------------------
@@ -12,33 +15,18 @@
 #   <var>  - variable to store the result
 #
 # This internally calls the check_cxx_source_compiles macro and sets
-# CMAKE_REQUIRED_FLAGS to <flag>.  See help for
+# CMAKE_REQUIRED_DEFINITIONS to <flag>.  See help for
 # CheckCXXSourceCompiles for a listing of variables that can otherwise
 # modify the build.  The result only tells that the compiler does not
 # give an error message when it encounters the flag.  If the flag has
 # any effect or even a specific one is beyond the scope of this module.
 
-#=============================================================================
-# Copyright 2006-2010 Kitware, Inc.
-# Copyright 2006 Alexander Neundorf <neundorf@kde.org>
-# Copyright 2011 Matthias Kretz <kretz@kde.org>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
 include(CheckCXXSourceCompiles)
 include(CMakeCheckCompilerFlagCommonPatterns)
 
 macro (CHECK_CXX_COMPILER_FLAG _FLAG _RESULT)
-   set(SAFE_CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
-   set(CMAKE_REQUIRED_FLAGS "${_FLAG}")
+   set(SAFE_CMAKE_REQUIRED_DEFINITIONS "${CMAKE_REQUIRED_DEFINITIONS}")
+   set(CMAKE_REQUIRED_DEFINITIONS "${_FLAG}")
 
    # Normalize locale during test compilation.
    set(_CheckCXXCompilerFlag_LOCALE_VARS LC_ALL LC_MESSAGES LANG)
@@ -59,6 +47,6 @@ macro (CHECK_CXX_COMPILER_FLAG _FLAG _RESULT)
    unset(_CheckCXXCompilerFlag_LOCALE_VARS)
    unset(_CheckCXXCompilerFlag_COMMON_PATTERNS)
 
-   set (CMAKE_REQUIRED_FLAGS "${SAFE_CMAKE_REQUIRED_FLAGS}")
+   set (CMAKE_REQUIRED_DEFINITIONS "${SAFE_CMAKE_REQUIRED_DEFINITIONS}")
 endmacro ()
 

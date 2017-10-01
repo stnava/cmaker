@@ -17,7 +17,9 @@
 
 # if defined(_MSC_VER)
         PRINT *, 'INFO:simulate[MSVC]'
-#  if _MSC_VER >= 1800
+#  if _MSC_VER >= 1900
+        PRINT *, 'INFO:simulate_version[019.00]'
+#  elif _MSC_VER >= 1800
         PRINT *, 'INFO:simulate_version[018.00]'
 #  elif _MSC_VER >= 1700
         PRINT *, 'INFO:simulate_version[017.00]'
@@ -45,6 +47,8 @@
 # define COMPILER_VERSION_PATCH HEX(__SUNPRO_F90    & 0xF)
 #elif defined(_CRAYFTN)
         PRINT *, 'INFO:compiler[Cray]'
+# define COMPILER_VERSION_MAJOR DEC(_RELEASE_MAJOR)
+# define COMPILER_VERSION_MINOR DEC(_RELEASE_MINOR)
 #elif defined(__G95__)
         PRINT *, 'INFO:compiler[G95]'
 # define COMPILER_VERSION_MAJOR DEC(__G95__)
@@ -99,12 +103,20 @@
         PRINT *, 'INFO:compiler[MIPSpro]'
 #elif defined(__hpux) || defined(__hpux__)
         PRINT *, 'INFO:compiler[HP]'
+#elif defined(NAGFOR)
+        PRINT *, 'INFO:compiler[NAG]'
+#define COMPILER_VERSION_MAJOR DEC(__NAG_COMPILER_RELEASE/10)
+#define COMPILER_VERSION_MINOR DEC(__NAG_COMPILER_RELEASE % 10)
+#define COMPILER_VERSION_PATCH DEC(__NAG_COMPILER_BUILD)
 #elif 1
 #       if 0
 !       The above 'elif 1' instead of 'else' is to work around a bug in the
 !       SGI preprocessor which produces both the __sgi and else blocks.
 #       endif
         PRINT *, 'INFO:compiler[]'
+#endif
+#if defined(__CRAYXE) || defined(__CRAYXC)
+        PRINT *, 'INFO:compiler_wrapper[CrayPrgEnv]'
 #endif
 
 #if 0

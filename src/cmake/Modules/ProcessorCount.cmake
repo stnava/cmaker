@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # ProcessorCount
 # --------------
@@ -40,19 +43,6 @@
 # A more reliable way might be to compile a small C program that uses the CPUID
 # instruction, but that again requires compiler support or compiling assembler
 # code.
-
-#=============================================================================
-# Copyright 2010-2011 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 function(ProcessorCount var)
   # Unknown:
@@ -171,17 +161,30 @@ function(ProcessorCount var)
   endif()
 
   if(NOT count)
-    # Sun (systems where uname -X emits "NumCPU" in its output):
-    find_program(ProcessorCount_cmd_uname uname)
-    mark_as_advanced(ProcessorCount_cmd_uname)
-    if(ProcessorCount_cmd_uname)
-      execute_process(COMMAND ${ProcessorCount_cmd_uname} -X
+    # Sun (systems where psrinfo tool is available)
+    find_program(ProcessorCount_cmd_psrinfo psrinfo PATHS /usr/sbin /sbin)
+    mark_as_advanced(ProcessorCount_cmd_psrinfo)
+    if (ProcessorCount_cmd_psrinfo)
+      execute_process(COMMAND ${ProcessorCount_cmd_psrinfo} -p -v
         ERROR_QUIET
         OUTPUT_STRIP_TRAILING_WHITESPACE
-        OUTPUT_VARIABLE uname_X_output)
-      string(REGEX MATCHALL "NumCPU = ([0-9]+)" procs "${uname_X_output}")
+        OUTPUT_VARIABLE psrinfo_output)
+      string(REGEX MATCH "([0-9]+) virtual processor" procs "${psrinfo_output}")
       set(count "${CMAKE_MATCH_1}")
-      #message("ProcessorCount: trying uname -X '${ProcessorCount_cmd_uname}'")
+      #message("ProcessorCount: trying psrinfo -p -v '${ProcessorCount_cmd_prvinfo}'")
+    else()
+      # Sun (systems where uname -X emits "NumCPU" in its output):
+      find_program(ProcessorCount_cmd_uname uname)
+      mark_as_advanced(ProcessorCount_cmd_uname)
+      if(ProcessorCount_cmd_uname)
+        execute_process(COMMAND ${ProcessorCount_cmd_uname} -X
+          ERROR_QUIET
+          OUTPUT_STRIP_TRAILING_WHITESPACE
+          OUTPUT_VARIABLE uname_X_output)
+        string(REGEX MATCHALL "NumCPU = ([0-9]+)" procs "${uname_X_output}")
+        set(count "${CMAKE_MATCH_1}")
+        #message("ProcessorCount: trying uname -X '${ProcessorCount_cmd_uname}'")
+      endif()
     endif()
   endif()
 

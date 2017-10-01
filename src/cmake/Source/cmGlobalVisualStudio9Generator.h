@@ -1,35 +1,21 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmGlobalVisualStudio9Generator_h
 #define cmGlobalVisualStudio9Generator_h
 
 #include "cmGlobalVisualStudio8Generator.h"
-
 
 /** \class cmGlobalVisualStudio9Generator
  * \brief Write a Unix makefiles.
  *
  * cmGlobalVisualStudio9Generator manages UNIX build process for a tree
  */
-class cmGlobalVisualStudio9Generator :
-  public cmGlobalVisualStudio8Generator
+class cmGlobalVisualStudio9Generator : public cmGlobalVisualStudio8Generator
 {
 public:
-  cmGlobalVisualStudio9Generator(const std::string& name,
-    const std::string& platformName);
+  cmGlobalVisualStudio9Generator(cmake* cm, const std::string& name,
+                                 const std::string& platformName);
   static cmGlobalGeneratorFactory* NewFactory();
-
-  ///! create the correct local generator
-  virtual cmLocalGenerator *CreateLocalGenerator();
 
   /**
    * Try to determine system information such as shared library
@@ -49,6 +35,7 @@ public:
    * Studio?
    */
   virtual std::string GetUserMacrosRegKeyBase();
+
 protected:
   virtual const char* GetIDEVersion() { return "9.0"; }
 private:

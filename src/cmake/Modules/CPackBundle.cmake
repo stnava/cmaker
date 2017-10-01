@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # CPackBundle
 # -----------
@@ -52,24 +55,16 @@
 #  list the main application folder, or the main executable. You should
 #  list any frameworks and plugins that are included in your app bundle.
 #
+# .. variable:: CPACK_BUNDLE_APPLE_CODESIGN_PARAMETER
+#
+#  Additional parameter that will passed to codesign.
+#  Default value: "--deep -f"
+#
 # .. variable:: CPACK_COMMAND_CODESIGN
 #
 #  Path to the codesign(1) command used to sign applications with an
 #  Apple cert. This variable can be used to override the automatically
 #  detected command (or specify its location if the auto-detection fails
 #  to find it.)
-
-#=============================================================================
-# Copyright 2006-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 #Bundle Generator specific code should be put here

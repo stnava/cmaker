@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindOpenAL
 # ----------
@@ -13,19 +16,6 @@
 #
 # Created by Eric Wing.  This was influenced by the FindSDL.cmake
 # module.
-
-#=============================================================================
-# Copyright 2005-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # This makes the presumption that you are include al.h like
 # #include "al.h"
@@ -79,11 +69,17 @@ find_path(OPENAL_INCLUDE_DIR al.h
   [HKEY_LOCAL_MACHINE\\SOFTWARE\\Creative\ Labs\\OpenAL\ 1.1\ Software\ Development\ Kit\\1.00.0000;InstallDir]
 )
 
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  set(_OpenAL_ARCH_DIR libs/Win64)
+else()
+  set(_OpenAL_ARCH_DIR libs/Win32)
+endif()
+
 find_library(OPENAL_LIBRARY
   NAMES OpenAL al openal OpenAL32
   HINTS
     ENV OPENALDIR
-  PATH_SUFFIXES lib64 lib libs64 libs libs/Win32 libs/Win64
+  PATH_SUFFIXES libx32 lib64 lib libs64 libs ${_OpenAL_ARCH_DIR}
   PATHS
   ~/Library/Frameworks
   /Library/Frameworks
@@ -94,9 +90,8 @@ find_library(OPENAL_LIBRARY
   [HKEY_LOCAL_MACHINE\\SOFTWARE\\Creative\ Labs\\OpenAL\ 1.1\ Software\ Development\ Kit\\1.00.0000;InstallDir]
 )
 
+unset(_OpenAL_ARCH_DIR)
 
-# handle the QUIETLY and REQUIRED arguments and set OPENAL_FOUND to TRUE if
-# all listed variables are TRUE
 include(${CMAKE_CURRENT_LIST_DIR}/FindPackageHandleStandardArgs.cmake)
 FIND_PACKAGE_HANDLE_STANDARD_ARGS(OpenAL  DEFAULT_MSG  OPENAL_LIBRARY OPENAL_INCLUDE_DIR)
 

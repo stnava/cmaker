@@ -1,16 +1,8 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2004-2011 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
+
+include(CMakeLanguageInformation)
 
 # This file sets the basic flags for the Fortran language in CMake.
 # It also loads the available platform file for the system-compiler
@@ -36,6 +28,12 @@ if (NOT _INCLUDED_FILE)
   include(Platform/${CMAKE_SYSTEM_NAME}-${CMAKE_BASE_NAME} OPTIONAL
           RESULT_VARIABLE _INCLUDED_FILE)
 endif ()
+
+# load any compiler-wrapper specific information
+if (CMAKE_Fortran_COMPILER_WRAPPER)
+  __cmake_include_compiler_wrapper(Fortran)
+endif ()
+
 # We specify the compiler information in the system file for some
 # platforms, but this language may not have been enabled when the file
 # was first included.  Include it again to get the language info.
@@ -165,10 +163,11 @@ endif()
 set(CMAKE_VERBOSE_MAKEFILE FALSE CACHE BOOL "If this value is on, makefiles will be generated without the .SILENT directive, and all commands will be echoed to the console during the make.  This is useful for debugging only. With Visual Studio IDE projects all commands are done without /nologo.")
 
 set(CMAKE_Fortran_FLAGS_INIT "$ENV{FFLAGS} ${CMAKE_Fortran_FLAGS_INIT}")
-# avoid just having a space as the initial value for the cache
-if(CMAKE_Fortran_FLAGS_INIT STREQUAL " ")
-  set(CMAKE_Fortran_FLAGS_INIT)
-endif()
+
+foreach(c "" _DEBUG _RELEASE _MINSIZEREL _RELWITHDEBINFO)
+  string(STRIP "${CMAKE_Fortran_FLAGS${c}_INIT}" CMAKE_Fortran_FLAGS${c}_INIT)
+endforeach()
+
 set (CMAKE_Fortran_FLAGS "${CMAKE_Fortran_FLAGS_INIT}" CACHE STRING
      "Flags for Fortran compiler.")
 
@@ -194,7 +193,7 @@ endif()
 # Create a static archive incrementally for large object file counts.
 # If CMAKE_Fortran_CREATE_STATIC_LIBRARY is set it will override these.
 if(NOT DEFINED CMAKE_Fortran_ARCHIVE_CREATE)
-  set(CMAKE_Fortran_ARCHIVE_CREATE "<CMAKE_AR> cq <TARGET> <LINK_FLAGS> <OBJECTS>")
+  set(CMAKE_Fortran_ARCHIVE_CREATE "<CMAKE_AR> qc <TARGET> <LINK_FLAGS> <OBJECTS>")
 endif()
 if(NOT DEFINED CMAKE_Fortran_ARCHIVE_APPEND)
   set(CMAKE_Fortran_ARCHIVE_APPEND "<CMAKE_AR> q  <TARGET> <LINK_FLAGS> <OBJECTS>")
@@ -207,7 +206,7 @@ endif()
 # (put -o after -c to workaround bug in at least one mpif77 wrapper)
 if(NOT CMAKE_Fortran_COMPILE_OBJECT)
   set(CMAKE_Fortran_COMPILE_OBJECT
-    "<CMAKE_Fortran_COMPILER> <DEFINES> <FLAGS> -c <SOURCE> -o <OBJECT>")
+    "<CMAKE_Fortran_COMPILER> <DEFINES> <INCLUDES> <FLAGS> -c <SOURCE> -o <OBJECT>")
 endif()
 
 # link a fortran program

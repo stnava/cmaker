@@ -1,23 +1,19 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmCursesMainForm_h
 #define cmCursesMainForm_h
 
-#include "../cmStandardIncludes.h"
+#include "cmConfigure.h"
+
 #include "cmCursesForm.h"
 #include "cmCursesStandardIncludes.h"
+#include "cmStateTypes.h"
+
+#include <stddef.h>
+#include <string>
+#include <vector>
 
 class cmCursesCacheEntryComposite;
-class cmCursesWidget;
 class cmake;
 
 /** \class cmCursesMainForm
@@ -27,9 +23,11 @@ class cmake;
  */
 class cmCursesMainForm : public cmCursesForm
 {
+  CM_DISABLE_COPY(cmCursesMainForm)
+
 public:
   cmCursesMainForm(std::vector<std::string> const& args, int initwidth);
-  virtual ~cmCursesMainForm();
+  ~cmCursesMainForm() CM_OVERRIDE;
 
   /**
    * Set the widgets which represent the cache entries.
@@ -39,13 +37,13 @@ public:
   /**
    * Handle user input.
    */
-  virtual void HandleInput();
+  void HandleInput() CM_OVERRIDE;
 
   /**
    * Display form. Use a window of size width x height, starting
    * at top, left.
    */
-  virtual void Render(int left, int top, int width, int height);
+  void Render(int left, int top, int width, int height) CM_OVERRIDE;
 
   /**
    * Returns true if an entry with the given key is in the
@@ -53,7 +51,8 @@ public:
    */
   bool LookForCacheEntry(const std::string& key);
 
-  enum {
+  enum
+  {
     MIN_WIDTH = 65,
     MIN_HEIGHT = 6,
     IDEAL_WIDTH = 80,
@@ -65,7 +64,7 @@ public:
    * exception is during a resize. The optional argument specifies the
    * string to be displayed in the status bar.
    */
-  virtual void UpdateStatusBar() { this->UpdateStatusBar(0); }
+  void UpdateStatusBar() CM_OVERRIDE { this->UpdateStatusBar(CM_NULLPTR); }
   virtual void UpdateStatusBar(const char* message);
 
   /**
@@ -81,13 +80,13 @@ public:
    * During a CMake run, an error handle should add errors
    * to be displayed afterwards.
    */
-  virtual void AddError(const char* message, const char* title);
+  void AddError(const char* message, const char* title) CM_OVERRIDE;
 
   /**
    * Used to do a configure. If argument is specified, it does only the check
    * and not configure.
    */
-  int Configure(int noconfigure=0);
+  int Configure(int noconfigure = 0);
 
   /**
    * Used to generate
@@ -97,24 +96,21 @@ public:
   /**
    * Used by main program
    */
-  int LoadCache(const char *dir);
+  int LoadCache(const char* dir);
 
   /**
    * Progress callback
    */
-  static void UpdateProgressOld(const char *msg, float prog, void*);
-  static void UpdateProgress(const char *msg, float prog, void*);
+  static void UpdateProgressOld(const char* msg, float prog, void*);
+  static void UpdateProgress(const char* msg, float prog, void*);
 
 protected:
-  cmCursesMainForm(const cmCursesMainForm& from);
-  void operator=(const cmCursesMainForm&);
-
   // Copy the cache values from the user interface to the actual
   // cache.
   void FillCacheManagerFromUI();
   // Fix formatting of values to a consistent form.
-  void FixValue(cmCacheManager::CacheEntryType type,
-                const std::string& in, std::string& out) const;
+  void FixValue(cmStateEnums::CacheEntryType type, const std::string& in,
+                std::string& out) const;
   // Re-post the existing fields. Used to toggle between
   // normal and advanced modes. Render() should be called
   // afterwards.
@@ -154,7 +150,7 @@ protected:
   int NumberOfPages;
 
   int InitialWidth;
-  cmake *CMakeInstance;
+  cmake* CMakeInstance;
 
   std::string SearchString;
   std::string OldSearchString;

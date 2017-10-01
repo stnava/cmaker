@@ -1,11 +1,11 @@
 
-macro(record_compiler_features lang compile_flags feature_list)
+macro(_record_compiler_features lang compile_flags feature_list)
   include("${CMAKE_ROOT}/Modules/Compiler/${CMAKE_${lang}_COMPILER_ID}-${lang}-FeatureTests.cmake" OPTIONAL)
 
   string(TOLOWER ${lang} lang_lc)
   file(REMOVE "${CMAKE_BINARY_DIR}/CMakeFiles/feature_tests.bin")
   file(WRITE "${CMAKE_BINARY_DIR}/CMakeFiles/feature_tests.${lang_lc}" "
-  const char features[] = {\"\"\n")
+  const char features[] = {\"\\n\"\n")
 
   get_property(known_features GLOBAL PROPERTY CMAKE_${lang}_KNOWN_FEATURES)
 
@@ -22,9 +22,18 @@ macro(record_compiler_features lang compile_flags feature_list)
   file(APPEND "${CMAKE_BINARY_DIR}/CMakeFiles/feature_tests.${lang_lc}"
     "\n};\n\nint main(int argc, char** argv) { (void)argv; return features[argc]; }\n")
 
+  if(CMAKE_${lang}_LINK_WITH_STANDARD_COMPILE_OPTION)
+    # This toolchain requires use of the language standard flag
+    # when linking in order to use the matching standard library.
+    set(compile_flags_for_link "${compile_flags}")
+  else()
+    set(compile_flags_for_link "")
+  endif()
+
   try_compile(CMAKE_${lang}_FEATURE_TEST
     ${CMAKE_BINARY_DIR} "${CMAKE_BINARY_DIR}/CMakeFiles/feature_tests.${lang_lc}"
     COMPILE_DEFINITIONS "${compile_flags}"
+    LINK_LIBRARIES "${compile_flags_for_link}"
     OUTPUT_VARIABLE _output
     COPY_FILE "${CMAKE_BINARY_DIR}/CMakeFiles/feature_tests.bin"
     COPY_FILE_ERROR _copy_error
@@ -35,6 +44,7 @@ macro(record_compiler_features lang compile_flags feature_list)
     set(_result 255)
   endif()
   unset(CMAKE_${lang}_FEATURE_TEST CACHE)
+  unset(compile_flags_for_link)
 
   if (_result EQUAL 0)
     file(APPEND ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeOutput.log
@@ -57,4 +67,14 @@ macro(record_compiler_features lang compile_flags feature_list)
     file(APPEND ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeError.log
       "Detecting ${lang} [${compile_flags}] compiler features failed to compile with the following output:\n${_output}\n${_copy_error}\n\n")
   endif()
+endmacro()
+
+macro(_record_compiler_features_c std)
+  list(APPEND CMAKE_C${std}_COMPILE_FEATURES c_std_${std})
+  _record_compiler_features(C "${CMAKE_C${std}_STANDARD_COMPILE_OPTION}" CMAKE_C${std}_COMPILE_FEATURES)
+endmacro()
+
+macro(_record_compiler_features_cxx std)
+  list(APPEND CMAKE_CXX${std}_COMPILE_FEATURES cxx_std_${std})
+  _record_compiler_features(CXX "${CMAKE_CXX${std}_STANDARD_COMPILE_OPTION}" CMAKE_CXX${std}_COMPILE_FEATURES)
 endmacro()

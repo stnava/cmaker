@@ -15,11 +15,11 @@ CHECK_C_SOURCE_COMPILES(
   HAVE___RESTRICT)
 
 CHECK_C_SOURCE_COMPILES(
-  "inline int test (void) {return 0;}\nint main (void) {return test();}"
+  "static inline int test (void) {return 0;}\nint main (void) {return test();}"
   HAVE_INLINE)
 
 CHECK_C_SOURCE_COMPILES (
-  "__inline int test (void) {return 0;}\nint main (void) {return test();}"
+  "static __inline int test (void) {return 0;}\nint main (void) {return test();}"
   HAVE___INLINE)
 
 CHECK_INCLUDE_FILE(byteswap.h HAVE_BYTESWAP_H)
@@ -113,12 +113,12 @@ ENDIF()
 SET(LZMA_SRCS
   common/sysdefs.h
   common/tuklib_integer.h
-  liblzma/booty/check.c
-  liblzma/booty/crc32_fast.c
-  liblzma/booty/crc32_table.c
-  liblzma/booty/crc64_fast.c
-  liblzma/booty/crc64_table.c
-  liblzma/booty/sha256.c
+  liblzma/check/check.c
+  liblzma/check/crc32_fast.c
+  liblzma/check/crc32_table.c
+  liblzma/check/crc64_fast.c
+  liblzma/check/crc64_table.c
+  liblzma/check/sha256.c
   liblzma/common/alone_decoder.c
   liblzma/common/alone_encoder.c
   liblzma/common/auto_decoder.c
@@ -182,16 +182,12 @@ SET(LZMA_SRCS
   liblzma/simple/x86.c
   )
 
-IF(WIN32 AND BUILD_SHARED_LIBS)
-  SET(LZMA_SRCS ${LZMA_SRCS} liblzma/liblzma_w32res.rc)
-ENDIF()
-
 CONFIGURE_FILE(config.h.in config.h @ONLY)
 
 INCLUDE_DIRECTORIES(
   "${CMLIBLZMA_SOURCE_DIR}/common"
   "${CMLIBLZMA_SOURCE_DIR}/liblzma/api"
-  "${CMLIBLZMA_SOURCE_DIR}/liblzma/booty"
+  "${CMLIBLZMA_SOURCE_DIR}/liblzma/check"
   "${CMLIBLZMA_SOURCE_DIR}/liblzma/common"
   "${CMLIBLZMA_SOURCE_DIR}/liblzma/delta"
   "${CMLIBLZMA_SOURCE_DIR}/liblzma/lz"
@@ -209,6 +205,16 @@ ELSEIF(CMAKE_C_COMPILER_ID STREQUAL "PathScale")
   SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -woffall")
 ENDIF()
 
-ADD_LIBRARY(cmliblzma ${LZMA_SRCS})
+ADD_LIBRARY(cmliblzma STATIC ${LZMA_SRCS})
+
+IF(CMAKE_C_COMPILER_ID STREQUAL "XL")
+  # Disable the XL compiler optimizer because it causes crashes
+  # and other bad behavior in liblzma code.
+  SET_PROPERTY(TARGET cmliblzma PROPERTY COMPILE_FLAGS "-qnooptimize")
+ELSEIF(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND
+       CMAKE_C_COMPILER_VERSION VERSION_LESS 3.4)
+  # Disable the old GNU compiler optimizer.
+  SET_PROPERTY(TARGET cmliblzma PROPERTY COMPILE_FLAGS "-O0")
+ENDIF()
 
 INSTALL(FILES COPYING DESTINATION ${CMAKE_DOC_DIR}/cmliblzma)

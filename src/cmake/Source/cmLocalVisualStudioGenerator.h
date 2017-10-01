@@ -1,25 +1,24 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmLocalVisualStudioGenerator_h
 #define cmLocalVisualStudioGenerator_h
 
+#include "cmConfigure.h"
+
+#include <map>
+#include <memory>
+#include <string>
+
+#include "cmGlobalVisualStudioGenerator.h"
 #include "cmLocalGenerator.h"
+#include "cm_auto_ptr.hxx"
 
-#include <cmsys/auto_ptr.hxx>
-
-class cmSourceFile;
-class cmSourceGroup;
 class cmCustomCommand;
 class cmCustomCommandGenerator;
+class cmGeneratorTarget;
+class cmGlobalGenerator;
+class cmMakefile;
+class cmSourceFile;
 
 /** \class cmLocalVisualStudioGenerator
  * \brief Base class for Visual Studio generators.
@@ -30,22 +29,7 @@ class cmCustomCommandGenerator;
 class cmLocalVisualStudioGenerator : public cmLocalGenerator
 {
 public:
-  /** Known versions of Visual Studio.  */
-  enum VSVersion
-  {
-    VS6 = 60,
-    VS7 = 70,
-    VS71 = 71,
-    VS8 = 80,
-    VS9 = 90,
-    VS10 = 100,
-    VS11 = 110,
-    VS12 = 120,
-    /* VS13 = 130 was skipped */
-    VS14 = 140
-  };
-
-  cmLocalVisualStudioGenerator(VSVersion v);
+  cmLocalVisualStudioGenerator(cmGlobalGenerator* gg, cmMakefile* mf);
   virtual ~cmLocalVisualStudioGenerator();
 
   /** Construct a script from the given list of command lines.  */
@@ -56,27 +40,25 @@ public:
       sequence of custom commands. */
   const char* GetReportErrorLabel() const;
 
-  /** Version of Visual Studio.  */
-  VSVersion GetVersion() const { return this->Version; }
+  cmGlobalVisualStudioGenerator::VSVersion GetVersion() const;
 
-  virtual std::string ComputeLongestObjectDirectory(cmTarget&) const = 0;
+  virtual std::string ComputeLongestObjectDirectory(
+    cmGeneratorTarget const*) const = 0;
 
   virtual void AddCMakeListsRules() = 0;
 
   virtual void ComputeObjectFilenames(
-                        std::map<cmSourceFile const*, std::string>& mapping,
-                        cmGeneratorTarget const* = 0);
+    std::map<cmSourceFile const*, std::string>& mapping,
+    cmGeneratorTarget const* = 0);
 
 protected:
   virtual const char* ReportErrorLabel() const;
   virtual bool CustomCommandUseLocal() const { return false; }
 
   /** Construct a custom command to make exe import lib dir.  */
-  cmsys::auto_ptr<cmCustomCommand>
-  MaybeCreateImplibDir(cmTarget& target, const std::string& config,
-                       bool isFortran);
-
-  VSVersion Version;
+  CM_AUTO_PTR<cmCustomCommand> MaybeCreateImplibDir(cmGeneratorTarget* target,
+                                                    const std::string& config,
+                                                    bool isFortran);
 };
 
 #endif

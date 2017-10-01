@@ -1,27 +1,22 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc.
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmCTestBuildHandler_h
 #define cmCTestBuildHandler_h
 
+#include "cmConfigure.h"
 
 #include "cmCTestGenericHandler.h"
-#include "cmListFileCache.h"
 
-#include <cmsys/RegularExpression.hxx>
-
+#include "cmProcessOutput.h"
+#include "cmsys/RegularExpression.hxx"
 #include <deque>
+#include <iosfwd>
+#include <stddef.h>
+#include <string>
+#include <vector>
 
 class cmMakefile;
+class cmXMLWriter;
 
 /** \class cmCTestBuildHandler
  * \brief A class that handles ctest -S invocations
@@ -30,74 +25,75 @@ class cmMakefile;
 class cmCTestBuildHandler : public cmCTestGenericHandler
 {
 public:
-  cmTypeMacro(cmCTestBuildHandler, cmCTestGenericHandler);
+  typedef cmCTestGenericHandler Superclass;
+  typedef cmProcessOutput::Encoding Encoding;
 
   /*
    * The main entry point for this class
    */
-  int ProcessHandler();
+  int ProcessHandler() CM_OVERRIDE;
 
   cmCTestBuildHandler();
 
-  void PopulateCustomVectors(cmMakefile *mf);
+  void PopulateCustomVectors(cmMakefile* mf) CM_OVERRIDE;
 
   /**
    * Initialize handler
    */
-  virtual void Initialize();
+  void Initialize() CM_OVERRIDE;
 
-  int GetTotalErrors() { return this->TotalErrors;}
-  int GetTotalWarnings() { return this->TotalWarnings;}
+  int GetTotalErrors() { return this->TotalErrors; }
+  int GetTotalWarnings() { return this->TotalWarnings; }
 
 private:
   std::string GetMakeCommand();
 
   //! Run command specialized for make and configure. Returns process status
   // and retVal is return value or exception.
-  int RunMakeCommand(const char* command,
-    int* retVal, const char* dir, int timeout,
-    std::ostream& ofs);
+  int RunMakeCommand(const char* command, int* retVal, const char* dir,
+                     int timeout, std::ostream& ofs,
+                     Encoding encoding = cmProcessOutput::Auto);
 
-  enum {
+  enum
+  {
     b_REGULAR_LINE,
     b_WARNING_LINE,
     b_ERROR_LINE
   };
 
   class cmCTestCompileErrorWarningRex
-    {
+  {
   public:
     cmCTestCompileErrorWarningRex() {}
     int FileIndex;
     int LineIndex;
     cmsys::RegularExpression RegularExpression;
-    };
+  };
 
   struct cmCTestBuildErrorWarning
   {
-    bool        Error;
-    int         LogLine;
+    bool Error;
+    int LogLine;
     std::string Text;
     std::string SourceFile;
     std::string SourceFileTail;
-    int         LineNumber;
+    int LineNumber;
     std::string PreContext;
     std::string PostContext;
   };
 
   // generate the XML output
-  void GenerateXMLHeader(std::ostream& os);
-  void GenerateXMLLaunched(std::ostream& os);
-  void GenerateXMLLogScraped(std::ostream& os);
-  void GenerateXMLFooter(std::ostream& os, double elapsed_build_time);
-  void GenerateXMLLaunchedFragment(std::ostream& os, const char* fname);
+  void GenerateXMLHeader(cmXMLWriter& xml);
+  void GenerateXMLLaunched(cmXMLWriter& xml);
+  void GenerateXMLLogScraped(cmXMLWriter& xml);
+  void GenerateXMLFooter(cmXMLWriter& xml, double elapsed_build_time);
   bool IsLaunchedErrorFile(const char* fname);
   bool IsLaunchedWarningFile(const char* fname);
 
-  std::string             StartBuild;
-  std::string             EndBuild;
-  double                  StartBuildTime;
-  double                  EndBuildTime;
+  std::string StartBuild;
+  std::string EndBuild;
+  double StartBuildTime;
+  double EndBuildTime;
 
   std::vector<std::string> CustomErrorMatches;
   std::vector<std::string> CustomErrorExceptions;
@@ -114,39 +110,41 @@ private:
 
   typedef std::deque<char> t_BuildProcessingQueueType;
 
-  void ProcessBuffer(const char* data, int length, size_t& tick,
-    size_t tick_len, std::ostream& ofs, t_BuildProcessingQueueType* queue);
+  void ProcessBuffer(const char* data, size_t length, size_t& tick,
+                     size_t tick_len, std::ostream& ofs,
+                     t_BuildProcessingQueueType* queue);
   int ProcessSingleLine(const char* data);
 
-  t_BuildProcessingQueueType            BuildProcessingQueue;
-  t_BuildProcessingQueueType            BuildProcessingErrorQueue;
-  size_t                                BuildOutputLogSize;
-  std::vector<char>                     CurrentProcessingLine;
+  t_BuildProcessingQueueType BuildProcessingQueue;
+  t_BuildProcessingQueueType BuildProcessingErrorQueue;
+  size_t BuildOutputLogSize;
+  std::vector<char> CurrentProcessingLine;
 
-  std::string                           SimplifySourceDir;
-  std::string                           SimplifyBuildDir;
-  size_t                                OutputLineCounter;
+  std::string SimplifySourceDir;
+  std::string SimplifyBuildDir;
+  size_t OutputLineCounter;
   typedef std::vector<cmCTestBuildErrorWarning> t_ErrorsAndWarningsVector;
-  t_ErrorsAndWarningsVector             ErrorsAndWarnings;
-  t_ErrorsAndWarningsVector::iterator   LastErrorOrWarning;
-  size_t                                PostContextCount;
-  size_t                                MaxPreContext;
-  size_t                                MaxPostContext;
-  std::deque<std::string>               PreContext;
+  t_ErrorsAndWarningsVector ErrorsAndWarnings;
+  t_ErrorsAndWarningsVector::iterator LastErrorOrWarning;
+  size_t PostContextCount;
+  size_t MaxPreContext;
+  size_t MaxPostContext;
+  std::deque<std::string> PreContext;
 
-  int                                   TotalErrors;
-  int                                   TotalWarnings;
-  char                                  LastTickChar;
+  int TotalErrors;
+  int TotalWarnings;
+  char LastTickChar;
 
-  bool                                  ErrorQuotaReached;
-  bool                                  WarningQuotaReached;
+  bool ErrorQuotaReached;
+  bool WarningQuotaReached;
 
-  int                                   MaxErrors;
-  int                                   MaxWarnings;
+  int MaxErrors;
+  int MaxWarnings;
 
   bool UseCTestLaunch;
   std::string CTestLaunchDir;
   class LaunchHelper;
+
   friend class LaunchHelper;
   class FragmentCompare;
 };

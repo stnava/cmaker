@@ -1,18 +1,19 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmLocalXCodeGenerator_h
 #define cmLocalXCodeGenerator_h
 
+#include "cmConfigure.h" // IWYU pragma: keep
+
+#include <map>
+#include <string>
+
 #include "cmLocalGenerator.h"
+
+class cmGeneratorTarget;
+class cmGlobalGenerator;
+class cmMakefile;
+class cmSourceFile;
 
 /** \class cmLocalXCodeGenerator
  * \brief Write a local Xcode project
@@ -24,20 +25,20 @@ class cmLocalXCodeGenerator : public cmLocalGenerator
 {
 public:
   ///! Set cache only and recurse to false by default.
-  cmLocalXCodeGenerator();
+  cmLocalXCodeGenerator(cmGlobalGenerator* gg, cmMakefile* mf);
 
   virtual ~cmLocalXCodeGenerator();
-  virtual std::string GetTargetDirectory(cmTarget const& target) const;
+  virtual std::string GetTargetDirectory(
+    cmGeneratorTarget const* target) const;
   virtual void AppendFlagEscape(std::string& flags,
                                 const std::string& rawFlag);
   virtual void Generate();
   virtual void GenerateInstallRules();
   virtual void ComputeObjectFilenames(
-                        std::map<cmSourceFile const*, std::string>& mapping,
-                        cmGeneratorTarget const* gt = 0);
-private:
+    std::map<cmSourceFile const*, std::string>& mapping,
+    cmGeneratorTarget const* gt = 0);
 
+private:
 };
 
 #endif
-

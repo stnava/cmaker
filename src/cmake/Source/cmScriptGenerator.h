@@ -1,40 +1,41 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmScriptGenerator_h
 #define cmScriptGenerator_h
 
-#include "cmStandardIncludes.h"
+#include "cmConfigure.h"
+
+#include <ostream>
+#include <string>
+#include <vector>
 
 class cmScriptGeneratorIndent
 {
 public:
-  cmScriptGeneratorIndent(): Level(0) {}
-  cmScriptGeneratorIndent(int level): Level(level) {}
+  cmScriptGeneratorIndent()
+    : Level(0)
+  {
+  }
+  cmScriptGeneratorIndent(int level)
+    : Level(level)
+  {
+  }
   void Write(std::ostream& os) const
-    {
-    for(int i=0; i < this->Level; ++i)
-      {
+  {
+    for (int i = 0; i < this->Level; ++i) {
       os << " ";
-      }
     }
+  }
   cmScriptGeneratorIndent Next(int step = 2) const
-    {
+  {
     return cmScriptGeneratorIndent(this->Level + step);
-    }
+  }
+
 private:
   int Level;
 };
 inline std::ostream& operator<<(std::ostream& os,
-                                cmScriptGeneratorIndent const& indent)
+                                cmScriptGeneratorIndent indent)
 {
   indent.Write(os);
   return os;
@@ -46,6 +47,8 @@ inline std::ostream& operator<<(std::ostream& os,
  */
 class cmScriptGenerator
 {
+  CM_DISABLE_COPY(cmScriptGenerator)
+
 public:
   cmScriptGenerator(const std::string& config_var,
                     std::vector<std::string> const& configurations);
@@ -54,18 +57,15 @@ public:
   void Generate(std::ostream& os, const std::string& config,
                 std::vector<std::string> const& configurationTypes);
 
-  const std::vector<std::string>& GetConfigurations() const
-    { return this->Configurations; }
-
 protected:
   typedef cmScriptGeneratorIndent Indent;
   virtual void GenerateScript(std::ostream& os);
-  virtual void GenerateScriptConfigs(std::ostream& os, Indent const& indent);
-  virtual void GenerateScriptActions(std::ostream& os, Indent const& indent);
+  virtual void GenerateScriptConfigs(std::ostream& os, Indent indent);
+  virtual void GenerateScriptActions(std::ostream& os, Indent indent);
   virtual void GenerateScriptForConfig(std::ostream& os,
                                        const std::string& config,
-                                       Indent const& indent);
-  virtual void GenerateScriptNoConfig(std::ostream&, Indent const&) {}
+                                       Indent indent);
+  virtual void GenerateScriptNoConfig(std::ostream&, Indent) {}
   virtual bool NeedsScriptNoConfig() const { return false; }
 
   // Test if this generator does something for a given configuration.
@@ -89,8 +89,8 @@ protected:
   bool ActionsPerConfig;
 
 private:
-  void GenerateScriptActionsOnce(std::ostream& os, Indent const& indent);
-  void GenerateScriptActionsPerConfig(std::ostream& os, Indent const& indent);
+  void GenerateScriptActionsOnce(std::ostream& os, Indent indent);
+  void GenerateScriptActionsPerConfig(std::ostream& os, Indent indent);
 };
 
 #endif

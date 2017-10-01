@@ -1,16 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # This file is included by CMakeFindEclipseCDT4.cmake and CMakeFindCodeBlocks.cmake
 
@@ -101,6 +91,8 @@ if (NOT CMAKE_EXTRA_GENERATOR_C_SYSTEM_INCLUDE_DIRS)
     _DETERMINE_GCC_SYSTEM_INCLUDE_DIRS(c _dirs _defines)
     set(CMAKE_EXTRA_GENERATOR_C_SYSTEM_INCLUDE_DIRS "${_dirs}" CACHE INTERNAL "C compiler system include directories")
     set(CMAKE_EXTRA_GENERATOR_C_SYSTEM_DEFINED_MACROS "${_defines}" CACHE INTERNAL "C compiler system defined macros")
+  elseif ("${CMAKE_C_COMPILER_ID}" MATCHES MSVC)
+    set(CMAKE_EXTRA_GENERATOR_C_SYSTEM_INCLUDE_DIRS "$ENV{INCLUDE}" CACHE INTERNAL "C compiler system include directories")
   endif ()
 endif ()
 
@@ -110,6 +102,8 @@ if (NOT CMAKE_EXTRA_GENERATOR_CXX_SYSTEM_INCLUDE_DIRS)
     _DETERMINE_GCC_SYSTEM_INCLUDE_DIRS(c++ _dirs _defines)
     set(CMAKE_EXTRA_GENERATOR_CXX_SYSTEM_INCLUDE_DIRS "${_dirs}" CACHE INTERNAL "CXX compiler system include directories")
     set(CMAKE_EXTRA_GENERATOR_CXX_SYSTEM_DEFINED_MACROS "${_defines}" CACHE INTERNAL "CXX compiler system defined macros")
+  elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES MSVC)
+    set(CMAKE_EXTRA_GENERATOR_CXX_SYSTEM_INCLUDE_DIRS "$ENV{INCLUDE}" CACHE INTERNAL "CXX compiler system include directories")
   endif ()
 endif ()
 

@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindSDL_ttf
 # -----------
@@ -15,7 +18,7 @@
 #
 #
 #
-# For backward compatiblity the following variables are also set:
+# For backward compatibility the following variables are also set:
 #
 # ::
 #
@@ -31,20 +34,6 @@
 # Created by Eric Wing.  This was influenced by the FindSDL.cmake
 # module, but with modifications to recognize OS X frameworks and
 # additional Unix paths (FreeBSD, etc).
-
-#=============================================================================
-# Copyright 2005-2009 Kitware, Inc.
-# Copyright 2012 Benjamin Eikel
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 if(NOT SDL_TTF_INCLUDE_DIR AND SDLTTF_INCLUDE_DIR)
   set(SDL_TTF_INCLUDE_DIR ${SDLTTF_INCLUDE_DIR} CACHE PATH "directory cache
@@ -102,7 +91,7 @@ FIND_PACKAGE_HANDLE_STANDARD_ARGS(SDL_ttf
                                   REQUIRED_VARS SDL_TTF_LIBRARIES SDL_TTF_INCLUDE_DIRS
                                   VERSION_VAR SDL_TTF_VERSION_STRING)
 
-# for backward compatiblity
+# for backward compatibility
 set(SDLTTF_LIBRARY ${SDL_TTF_LIBRARIES})
 set(SDLTTF_INCLUDE_DIR ${SDL_TTF_INCLUDE_DIRS})
 set(SDLTTF_FOUND ${SDL_TTF_FOUND})

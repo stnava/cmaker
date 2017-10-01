@@ -1,19 +1,20 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmExportInstallFileGenerator_h
 #define cmExportInstallFileGenerator_h
 
+#include "cmConfigure.h"
+
 #include "cmExportFileGenerator.h"
 
+#include <iosfwd>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
+class cmGeneratorTarget;
+class cmGlobalGenerator;
 class cmInstallExportGenerator;
 class cmInstallTargetGenerator;
 
@@ -31,7 +32,7 @@ class cmInstallTargetGenerator;
  *
  * This is used to implement the INSTALL(EXPORT) command.
  */
-class cmExportInstallFileGenerator: public cmExportFileGenerator
+class cmExportInstallFileGenerator : public cmExportFileGenerator
 {
 public:
   /** Construct with the export installer that will install the
@@ -42,48 +43,55 @@ public:
       maps from the configuration name to the file temporary location
       for installation.  */
   std::map<std::string, std::string> const& GetConfigImportFiles()
-    { return this->ConfigImportFiles; }
+  {
+    return this->ConfigImportFiles;
+  }
 
   /** Compute the globbing expression used to load per-config import
       files from the main file.  */
   std::string GetConfigImportFileGlob();
+
 protected:
-
   // Implement virtual methods from the superclass.
-  virtual bool GenerateMainFile(std::ostream& os);
-  virtual void GenerateImportTargetsConfig(std::ostream& os,
-                                           const std::string& config,
-                                           std::string const& suffix,
-                            std::vector<std::string> &missingTargets);
-  virtual void HandleMissingTarget(std::string& link_libs,
-                                   std::vector<std::string>& missingTargets,
-                                   cmMakefile* mf,
-                                   cmTarget* depender,
-                                   cmTarget* dependee);
+  bool GenerateMainFile(std::ostream& os) CM_OVERRIDE;
+  void GenerateImportTargetsConfig(
+    std::ostream& os, const std::string& config, std::string const& suffix,
+    std::vector<std::string>& missingTargets) CM_OVERRIDE;
+  void HandleMissingTarget(std::string& link_libs,
+                           std::vector<std::string>& missingTargets,
+                           cmGeneratorTarget* depender,
+                           cmGeneratorTarget* dependee) CM_OVERRIDE;
 
-  virtual void ReplaceInstallPrefix(std::string &input);
+  void ReplaceInstallPrefix(std::string& input) CM_OVERRIDE;
 
-  void ComplainAboutMissingTarget(cmTarget* depender,
-                                  cmTarget* dependee,
+  void ComplainAboutMissingTarget(cmGeneratorTarget* depender,
+                                  cmGeneratorTarget* dependee,
                                   int occurrences);
 
-  std::vector<std::string> FindNamespaces(cmMakefile* mf,
+  std::vector<std::string> FindNamespaces(cmGlobalGenerator* gg,
                                           const std::string& name);
 
+  /** Generate the relative import prefix.  */
+  virtual void GenerateImportPrefix(std::ostream&);
+
+  /** Generate the relative import prefix.  */
+  virtual void LoadConfigFiles(std::ostream&);
+
+  virtual void CleanupTemporaryVariables(std::ostream&);
 
   /** Generate a per-configuration file for the targets.  */
-  bool GenerateImportFileConfig(const std::string& config,
-                            std::vector<std::string> &missingTargets);
+  virtual bool GenerateImportFileConfig(
+    const std::string& config, std::vector<std::string>& missingTargets);
 
   /** Fill in properties indicating installed file locations.  */
   void SetImportLocationProperty(const std::string& config,
                                  std::string const& suffix,
                                  cmInstallTargetGenerator* itgen,
                                  ImportPropertyMap& properties,
-                                 std::set<std::string>& importedLocations
-                                );
+                                 std::set<std::string>& importedLocations);
 
-  std::string InstallNameDir(cmTarget* target, const std::string& config);
+  std::string InstallNameDir(cmGeneratorTarget* target,
+                             const std::string& config) CM_OVERRIDE;
 
   cmInstallExportGenerator* IEGen;
 

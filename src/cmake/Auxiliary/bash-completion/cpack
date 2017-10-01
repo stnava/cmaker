@@ -3,7 +3,14 @@
 _cpack()
 {
     local cur prev words cword
-    _init_completion -n = || return
+    if type -t _init_completion >/dev/null; then
+        _init_completion -n = || return
+    else
+        # manual initialization for older bash completion versions
+        COMPREPLY=()
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+    fi
 
     case "$prev" in
         -G)
@@ -39,6 +46,26 @@ _cpack()
         --help-command)
             COMPREPLY=( $( compgen -W '$( cpack --help-command-list 2>/dev/null|
                 grep -v "^cpack version " )' -- "$cur" ) )
+            return
+            ;;
+        --help-manual)
+            COMPREPLY=( $( compgen -W '$( cpack --help-manual-list 2>/dev/null|
+                grep -v "^cpack version " | sed -e "s/([0-9])$//" )' -- "$cur" ) )
+            return
+            ;;
+        --help-module)
+            COMPREPLY=( $( compgen -W '$( cpack --help-module-list 2>/dev/null|
+                grep -v "^cpack version " )' -- "$cur" ) )
+            return
+            ;;
+        --help-policy)
+            COMPREPLY=( $( compgen -W '$( cpack --help-policy-list 2>/dev/null |
+                grep -v "^cpack version " )' -- "$cur" ) )
+            return
+            ;;
+        --help-property)
+            COMPREPLY=( $( compgen -W '$( cpack --help-property-list \
+                2>/dev/null | grep -v "^cpack version " )' -- "$cur" ) )
             return
             ;;
         --help-variable)

@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # CheckTypeSize
 # -------------
@@ -65,24 +68,11 @@
 #   CMAKE_REQUIRED_QUIET = execute quietly without messages
 #   CMAKE_EXTRA_INCLUDE_FILES = list of extra headers to include
 
-#=============================================================================
-# Copyright 2002-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
 include(CheckIncludeFile)
 include(CheckIncludeFileCXX)
 
 cmake_policy(PUSH)
-cmake_policy(VERSION 3.0)
+cmake_policy(SET CMP0054 NEW)
 
 get_filename_component(__check_type_size_dir "${CMAKE_CURRENT_LIST_FILE}" PATH)
 
@@ -97,24 +87,24 @@ function(__check_type_size_impl type var map builtin language)
   set(headers)
   if(builtin)
     if(HAVE_SYS_TYPES_H)
-      set(headers "${headers}#include <sys/types.h>\n")
+      string(APPEND headers "#include <sys/types.h>\n")
     endif()
     if(HAVE_STDINT_H)
-      set(headers "${headers}#include <stdint.h>\n")
+      string(APPEND headers "#include <stdint.h>\n")
     endif()
     if(HAVE_STDDEF_H)
-      set(headers "${headers}#include <stddef.h>\n")
+      string(APPEND headers "#include <stddef.h>\n")
     endif()
   endif()
   foreach(h ${CMAKE_EXTRA_INCLUDE_FILES})
-    set(headers "${headers}#include \"${h}\"\n")
+    string(APPEND headers "#include \"${h}\"\n")
   endforeach()
 
   # Perform the check.
 
-  if("${language}" STREQUAL "C")
+  if(language STREQUAL "C")
     set(src ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CheckTypeSize/${var}.c)
-  elseif("${language}" STREQUAL "CXX")
+  elseif(language STREQUAL "CXX")
     set(src ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CheckTypeSize/${var}.cpp)
   else()
     message(FATAL_ERROR "Unknown language:\n  ${language}\nSupported languages: C, CXX.\n")
@@ -157,7 +147,7 @@ function(__check_type_size_impl type var map builtin language)
         string(REGEX MATCH   "${regex_key}"       key "${info}")
         string(REGEX REPLACE "${regex_key}" "\\1" key "${key}")
         if(key)
-          set(code "${code}\nset(${var}-${key} \"${size}\")")
+          string(APPEND code "\nset(${var}-${key} \"${size}\")")
           list(APPEND keys ${key})
         endif()
       endif()
@@ -229,11 +219,11 @@ macro(CHECK_TYPE_SIZE TYPE VARIABLE)
     set(_builtin 0)
   else()
     set(_builtin 1)
-    if("${_language}" STREQUAL "C")
+    if(_language STREQUAL "C")
       check_include_file(sys/types.h HAVE_SYS_TYPES_H)
       check_include_file(stdint.h HAVE_STDINT_H)
       check_include_file(stddef.h HAVE_STDDEF_H)
-    elseif("${_language}" STREQUAL "CXX")
+    elseif(_language STREQUAL "CXX")
       check_include_file_cxx(sys/types.h HAVE_SYS_TYPES_H)
       check_include_file_cxx(stdint.h HAVE_STDINT_H)
       check_include_file_cxx(stddef.h HAVE_STDDEF_H)
@@ -257,10 +247,10 @@ macro(CHECK_TYPE_SIZE TYPE VARIABLE)
     set(${VARIABLE}_CODE)
     set(_if if)
     foreach(key ${${VARIABLE}_KEYS})
-      set(${VARIABLE}_CODE "${${VARIABLE}_CODE}#${_if} defined(${key})\n# define ${VARIABLE} ${${VARIABLE}-${key}}\n")
+      string(APPEND ${VARIABLE}_CODE "#${_if} defined(${key})\n# define ${VARIABLE} ${${VARIABLE}-${key}}\n")
       set(_if elif)
     endforeach()
-    set(${VARIABLE}_CODE "${${VARIABLE}_CODE}#else\n# error ${VARIABLE} unknown\n#endif")
+    string(APPEND ${VARIABLE}_CODE "#else\n# error ${VARIABLE} unknown\n#endif")
     set(_if)
   elseif(${VARIABLE})
     set(${VARIABLE}_CODE "#define ${VARIABLE} ${${VARIABLE}}")

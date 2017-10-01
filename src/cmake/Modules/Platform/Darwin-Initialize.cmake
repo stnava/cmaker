@@ -90,15 +90,9 @@ elseif("${CMAKE_GENERATOR}" MATCHES Xcode
       endif()
     endforeach()
 
-    if(CMAKE_OSX_DEPLOYMENT_TARGET AND
-        NOT CMAKE_OSX_DEPLOYMENT_TARGET VERSION_EQUAL ${_CMAKE_OSX_DEPLOYMENT_TARGET})
-      set(_CMAKE_OSX_SDKS_VER ${CMAKE_OSX_DEPLOYMENT_TARGET}${_CMAKE_OSX_SDKS_VER_SUFFIX_${CMAKE_OSX_DEPLOYMENT_TARGET}})
-      set(_CMAKE_OSX_SYSROOT_CHECK "${_CMAKE_OSX_SDKS_DIR}/MacOSX${_CMAKE_OSX_SDKS_VER}.sdk")
-      message(WARNING
-        "CMAKE_OSX_DEPLOYMENT_TARGET is '${CMAKE_OSX_DEPLOYMENT_TARGET}' "
-        "but the matching SDK does not exist at:\n \"${_CMAKE_OSX_SYSROOT_CHECK}\"\n"
-        "Instead using SDK:\n \"${_CMAKE_OSX_SYSROOT_DEFAULT}\"."
-        )
+    if(NOT CMAKE_CROSSCOMPILING AND NOT CMAKE_OSX_DEPLOYMENT_TARGET AND _CURRENT_OSX_VERSION VERSION_LESS _CMAKE_OSX_DEPLOYMENT_TARGET)
+      set(CMAKE_OSX_DEPLOYMENT_TARGET ${_CURRENT_OSX_VERSION} CACHE STRING
+        "Minimum OS X version to target for deployment (at runtime); newer APIs weak linked. Set to empty string for default value." FORCE)
     endif()
   else()
     # Assume developer files are in root (such as Xcode 4.5 command-line tools).
@@ -119,7 +113,6 @@ set(CMAKE_OSX_SYSROOT "${_CMAKE_OSX_SYSROOT_DEFAULT}" CACHE ${_CMAKE_OSX_SYSROOT
   "The product will be built against the headers and libraries located inside the indicated SDK.")
 
 # Transform the cached value to something we can use.
-set(_CMAKE_OSX_SYSROOT_ORIG "${CMAKE_OSX_SYSROOT}")
 set(_CMAKE_OSX_SYSROOT_PATH "")
 if(CMAKE_OSX_SYSROOT)
   if("x${CMAKE_OSX_SYSROOT}" MATCHES "/")
@@ -128,7 +121,6 @@ if(CMAKE_OSX_SYSROOT)
       message(WARNING "Ignoring CMAKE_OSX_SYSROOT value:\n ${CMAKE_OSX_SYSROOT}\n"
         "because the directory does not exist.")
       set(CMAKE_OSX_SYSROOT "")
-      set(_CMAKE_OSX_SYSROOT_ORIG "")
     endif()
     set(_CMAKE_OSX_SYSROOT_PATH "${CMAKE_OSX_SYSROOT}")
   else()

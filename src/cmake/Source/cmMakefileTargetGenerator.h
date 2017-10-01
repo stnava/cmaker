@@ -1,59 +1,57 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmMakefileTargetGenerator_h
 #define cmMakefileTargetGenerator_h
 
+#include "cmConfigure.h"
+
+#include <iosfwd>
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "cmCommonTargetGenerator.h"
 #include "cmLocalUnixMakefileGenerator3.h"
 #include "cmOSXBundleGenerator.h"
 
 class cmCustomCommandGenerator;
-class cmDependInformation;
-class cmDepends;
-class cmGeneratorTarget;
 class cmGeneratedFileStream;
+class cmGeneratorTarget;
 class cmGlobalUnixMakefileGenerator3;
-class cmLocalUnixMakefileGenerator3;
-class cmMakefile;
-class cmTarget;
+class cmLinkLineComputer;
+class cmOutputConverter;
 class cmSourceFile;
+class cmStateDirectory;
 
 /** \class cmMakefileTargetGenerator
  * \brief Support Routines for writing makefiles
  *
  */
-class cmMakefileTargetGenerator
+class cmMakefileTargetGenerator : public cmCommonTargetGenerator
 {
 public:
   // constructor to set the ivars
-  cmMakefileTargetGenerator(cmTarget* target);
-  virtual ~cmMakefileTargetGenerator();
+  cmMakefileTargetGenerator(cmGeneratorTarget* target);
+  ~cmMakefileTargetGenerator() CM_OVERRIDE;
 
   // construct using this factory call
-  static cmMakefileTargetGenerator *New(cmGeneratorTarget *tgt);
+  static cmMakefileTargetGenerator* New(cmGeneratorTarget* tgt);
 
   /* the main entry point for this class. Writes the Makefiles associated
      with this target */
   virtual void WriteRuleFiles() = 0;
 
   /* return the number of actions that have progress reporting on them */
-  virtual unsigned long GetNumberOfProgressActions() {
-    return this->NumberOfProgressActions;}
-  std::string GetProgressFileNameFull()
-    { return this->ProgressFileNameFull; }
+  virtual unsigned long GetNumberOfProgressActions()
+  {
+    return this->NumberOfProgressActions;
+  }
+  std::string GetProgressFileNameFull() { return this->ProgressFileNameFull; }
 
-  cmTarget* GetTarget() { return this->Target;}
+  cmGeneratorTarget* GetGeneratorTarget() { return this->GeneratorTarget; }
 
 protected:
-
   // create the file and directory etc
   void CreateRuleFile();
 
@@ -75,13 +73,16 @@ protected:
   void WriteTargetDependRules();
 
   // write rules for Mac OS X Application Bundle content.
-  struct MacOSXContentGeneratorType :
-    cmOSXBundleGenerator::MacOSXContentGeneratorType
+  struct MacOSXContentGeneratorType
+    : cmOSXBundleGenerator::MacOSXContentGeneratorType
   {
-    MacOSXContentGeneratorType(cmMakefileTargetGenerator* gen) :
-      Generator(gen) {}
+    MacOSXContentGeneratorType(cmMakefileTargetGenerator* gen)
+      : Generator(gen)
+    {
+    }
 
-    void operator()(cmSourceFile const& source, const char* pkgloc);
+    void operator()(cmSourceFile const& source,
+                    const char* pkgloc) CM_OVERRIDE;
 
   private:
     cmMakefileTargetGenerator* Generator;
@@ -92,8 +93,7 @@ protected:
   void WriteObjectRuleFiles(cmSourceFile const& source);
 
   // write the build rule for an object
-  void WriteObjectBuildFile(std::string &obj,
-                            const std::string& lang,
+  void WriteObjectBuildFile(std::string& obj, const std::string& lang,
                             cmSourceFile const& source,
                             std::vector<std::string>& depends);
 
@@ -115,7 +115,6 @@ protected:
   void WriteObjectsVariable(std::string& variableName,
                             std::string& variableNameExternal,
                             bool useWatcomQuote);
-  void WriteObjectsString(std::string& buildObjs);
   void WriteObjectsStrings(std::vector<std::string>& objStrings,
                            std::string::size_type limit = std::string::npos);
 
@@ -123,12 +122,6 @@ protected:
   void WriteTargetDriverRule(const std::string& main_output, bool relink);
 
   void DriveCustomCommands(std::vector<std::string>& depends);
-
-  // Return the a string with -F flags on apple
-  std::string GetFrameworkFlags(std::string const& l);
-
-  void AppendFortranFormatFlags(std::string& flags,
-                                cmSourceFile const& source);
 
   // append intertarget dependencies
   void AppendTargetDepends(std::vector<std::string>& depends);
@@ -149,18 +142,22 @@ protected:
                         std::vector<std::string>& makefile_commands,
                         std::vector<std::string>& makefile_depends);
 
+  cmLinkLineComputer* CreateLinkLineComputer(
+    cmOutputConverter* outputConverter, cmStateDirectory const& stateDir);
+
   /** Create a response file with the given set of options.  Returns
       the relative path from the target build working directory to the
       response file name.  */
-  std::string CreateResponseFile(const char* name,
-                                 std::string const& options,
+  std::string CreateResponseFile(const char* name, std::string const& options,
                                  std::vector<std::string>& makefile_depends);
 
+  bool CheckUseResponseFileForObjects(std::string const& l) const;
+  bool CheckUseResponseFileForLibraries(std::string const& l) const;
+
   /** Create list of flags for link libraries. */
-  void CreateLinkLibs(std::string& linkLibs, bool relink,
-                      bool useResponseFile,
-                      std::vector<std::string>& makefile_depends,
-                      bool useWatcomQuote);
+  void CreateLinkLibs(cmLinkLineComputer* linkLineComputer,
+                      std::string& linkLibs, bool useResponseFile,
+                      std::vector<std::string>& makefile_depends);
 
   /** Create lists of object files for linking and cleaning.  */
   void CreateObjectLists(bool useLinkScript, bool useArchiveRules,
@@ -168,19 +165,22 @@ protected:
                          std::vector<std::string>& makefile_depends,
                          bool useWatcomQuote);
 
-  void AddIncludeFlags(std::string& flags, const std::string& lang);
+  /** Add commands for generate def files */
+  void GenDefFile(std::vector<std::string>& real_link_commands);
+
+  void AddIncludeFlags(std::string& flags,
+                       const std::string& lang) CM_OVERRIDE;
 
   virtual void CloseFileStreams();
-  void RemoveForbiddenFlags(const char* flagVar, const std::string& linkLang,
-                            std::string& linkFlags);
-  cmTarget *Target;
-  cmGeneratorTarget* GeneratorTarget;
-  cmLocalUnixMakefileGenerator3 *LocalGenerator;
-  cmGlobalUnixMakefileGenerator3 *GlobalGenerator;
-  cmMakefile *Makefile;
-  std::string ConfigName;
+  cmLocalUnixMakefileGenerator3* LocalGenerator;
+  cmGlobalUnixMakefileGenerator3* GlobalGenerator;
 
-  enum CustomCommandDriveType { OnBuild, OnDepends, OnUtility };
+  enum CustomCommandDriveType
+  {
+    OnBuild,
+    OnDepends,
+    OnUtility
+  };
   CustomCommandDriveType CustomCommandDriver;
 
   // the full path to the build file
@@ -197,17 +197,19 @@ protected:
   std::string TargetBuildDirectoryFull;
 
   // the stream for the build file
-  cmGeneratedFileStream *BuildFileStream;
+  cmGeneratedFileStream* BuildFileStream;
 
   // the stream for the flag file
   std::string FlagFileNameFull;
-  cmGeneratedFileStream *FlagFileStream;
-  class StringList: public std::vector<std::string> {};
+  cmGeneratedFileStream* FlagFileStream;
+  class StringList : public std::vector<std::string>
+  {
+  };
   std::map<std::string, StringList> FlagFileDepends;
 
   // the stream for the info file
   std::string InfoFileNameFull;
-  cmGeneratedFileStream *InfoFileStream;
+  cmGeneratedFileStream* InfoFileStream;
 
   // files to clean
   std::vector<std::string> CleanFiles;
@@ -224,12 +226,10 @@ protected:
 
   typedef std::map<std::string, std::string> MultipleOutputPairsType;
   MultipleOutputPairsType MultipleOutputPairs;
-  void WriteMakeRule(std::ostream& os,
-                     const char* comment,
+  bool WriteMakeRule(std::ostream& os, const char* comment,
                      const std::vector<std::string>& outputs,
                      const std::vector<std::string>& depends,
                      const std::vector<std::string>& commands,
-                     bool symbolic,
                      bool in_help = false);
 
   // Target name info.
@@ -243,43 +243,6 @@ protected:
   std::set<std::string> MacContentFolders;
   cmOSXBundleGenerator* OSXBundleGenerator;
   MacOSXContentGeneratorType* MacOSXContentGenerator;
-
-  typedef std::map<std::string, std::string> ByLanguageMap;
-  std::string GetFlags(const std::string &l);
-  ByLanguageMap FlagsByLanguage;
-  std::string GetDefines(const std::string &l);
-  ByLanguageMap DefinesByLanguage;
-
-  // Target-wide Fortran module output directory.
-  bool FortranModuleDirectoryComputed;
-  std::string FortranModuleDirectory;
-  const char* GetFortranModuleDirectory();
-
-  // Compute target-specific Fortran language flags.
-  void AddFortranFlags(std::string& flags);
-
-  // Helper to add flag for windows .def file.
-  void AddModuleDefinitionFlag(std::string& flags);
-
-  // Add language feature flags.
-  void AddFeatureFlags(std::string& flags, const std::string& lang);
-
-  // Feature query methods.
-  const char* GetFeature(const std::string& feature);
-  bool GetFeatureAsBool(const std::string& feature);
-
-  //==================================================================
-  // Convenience routines that do nothing more than forward to
-  // implementaitons
-  std::string Convert(const std::string& source,
-                      cmLocalGenerator::RelativeRoot relative,
-                      cmLocalGenerator::OutputFormat output =
-                      cmLocalGenerator::UNCHANGED,
-                      bool optional = false)
-  {
-    return this->LocalGenerator->Convert(source, relative, output, optional);
-  }
-
 };
 
 #endif

@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # WriteCompilerDetectionHeader
 # ----------------------------
@@ -17,6 +20,8 @@
 #              [VERSION <version>]
 #              [PROLOG <prolog>]
 #              [EPILOG <epilog>]
+#              [ALLOW_UNKNOWN_COMPILERS]
+#              [ALLOW_UNKNOWN_COMPILER_VERSIONS]
 #    )
 #
 # The ``write_compiler_detection_header`` function generates the
@@ -36,7 +41,7 @@
 #      PREFIX ClimbingStats
 #      OUTPUT_FILES_VAR support_files
 #      OUTPUT_DIR compilers
-#      COMPILERS GNU Clang MSVC
+#      COMPILERS GNU Clang MSVC Intel
 #      FEATURES cxx_variadic_templates
 #    )
 #    install(FILES
@@ -73,9 +78,15 @@
 # Available features in this version of CMake are listed in the
 # :prop_gbl:`CMAKE_C_KNOWN_FEATURES` and
 # :prop_gbl:`CMAKE_CXX_KNOWN_FEATURES` global properties.
+# The ``{c,cxx}_std_*`` meta-features are ignored if requested.
 #
 # See the :manual:`cmake-compile-features(7)` manual for information on
 # compile features.
+#
+# ``ALLOW_UNKNOWN_COMPILERS`` and ``ALLOW_UNKNOWN_COMPILER_VERSIONS`` cause
+# the module to generate conditions that treat unknown compilers as simply
+# lacking all features.  Without these options the default behavior is to
+# generate a ``#error`` for unknown compilers.
 #
 # Feature Test Macros
 # ===================
@@ -100,7 +111,7 @@
 #    write_compiler_detection_header(
 #      FILE climbingstats_compiler_detection.h
 #      PREFIX ClimbingStats
-#      COMPILERS GNU Clang AppleClang MSVC
+#      COMPILERS GNU Clang AppleClang MSVC Intel
 #      FEATURES cxx_variadic_templates
 #    )
 #
@@ -212,20 +223,6 @@
 #       CompatSupport_DEPRECATED=
 #   )
 
-#=============================================================================
-# Copyright 2014 Stephen Kelly <steveire@gmail.com>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
-include(${CMAKE_CURRENT_LIST_DIR}/CMakeParseArguments.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/CMakeCompilerIdDetection.cmake)
 
 function(_load_compiler_variables CompilerId lang)
@@ -242,17 +239,30 @@ function(_load_compiler_variables CompilerId lang)
   set(_compiler_id_version_compute_${CompilerId} ${_compiler_id_version_compute} PARENT_SCOPE)
 endfunction()
 
+macro(_simpledefine FEATURE_NAME FEATURE_TESTNAME FEATURE_STRING FEATURE_DEFAULT_STRING)
+  if (feature STREQUAL "${FEATURE_NAME}")
+        set(def_value "${prefix_arg}_${FEATURE_TESTNAME}")
+        string(APPEND file_content "
+#  if defined(${def_name}) && ${def_name}
+#    define ${def_value} ${FEATURE_STRING}
+#  else
+#    define ${def_value} ${FEATURE_DEFAULT_STRING}
+#  endif
+\n")
+  endif()
+endmacro()
+
 function(write_compiler_detection_header
     file_keyword file_arg
     prefix_keyword prefix_arg
     )
-  if (NOT file_keyword STREQUAL FILE)
+  if (NOT "x${file_keyword}" STREQUAL "xFILE")
     message(FATAL_ERROR "write_compiler_detection_header: FILE parameter missing.")
   endif()
-  if (NOT prefix_keyword STREQUAL PREFIX)
+  if (NOT "x${prefix_keyword}" STREQUAL "xPREFIX")
     message(FATAL_ERROR "write_compiler_detection_header: PREFIX parameter missing.")
   endif()
-  set(options)
+  set(options ALLOW_UNKNOWN_COMPILERS ALLOW_UNKNOWN_COMPILER_VERSIONS)
   set(oneValueArgs VERSION EPILOG PROLOG OUTPUT_FILES_VAR OUTPUT_DIR)
   set(multiValueArgs COMPILERS FEATURES)
   cmake_parse_arguments(_WCD "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -282,9 +292,9 @@ function(write_compiler_detection_header
   set(_min_version 3.1.0) # Version which introduced this function
   if (_WCD_VERSION VERSION_LESS _min_version)
     set(err "VERSION compatibility for write_compiler_detection_header is set to ${_WCD_VERSION}, which is too low.")
-    set(err "${err}  It must be set to at least ${_min_version}.  ")
-    set(err "${err}  Either set the VERSION parameter to the write_compiler_detection_header function, or update")
-    set(err "${err} your minimum required CMake version with the cmake_minimum_required command.")
+    string(APPEND err "  It must be set to at least ${_min_version}.  ")
+    string(APPEND err "  Either set the VERSION parameter to the write_compiler_detection_header function, or update")
+    string(APPEND err " your minimum required CMake version with the cmake_minimum_required command.")
     message(FATAL_ERROR "${err}")
   endif()
 
@@ -323,6 +333,7 @@ function(write_compiler_detection_header
     AppleClang
     MSVC
     SunPro
+    Intel
   )
 
   set(_hex_compilers ADSP Borland Embarcadero SunPro)
@@ -348,11 +359,11 @@ function(write_compiler_detection_header
 ")
 
   if (_WCD_PROLOG)
-    set(file_content "${file_content}\n${_WCD_PROLOG}\n")
+    string(APPEND file_content "\n${_WCD_PROLOG}\n")
   endif()
 
   if (_need_hex_conversion)
-    set(file_content "${file_content}
+    string(APPEND file_content "
 #define ${prefix_arg}_DEC(X) (X)
 #define ${prefix_arg}_HEX(X) ( \\
     ((X)>>28 & 0xF) * 10000000 + \\
@@ -367,7 +378,11 @@ function(write_compiler_detection_header
   endif()
 
   foreach(feature ${_WCD_FEATURES})
-    if (feature MATCHES "^cxx_")
+    if (feature MATCHES "^c_std_")
+      # ignored
+    elseif (feature MATCHES "^cxx_std_")
+      # ignored
+    elseif (feature MATCHES "^cxx_")
       list(APPEND _langs CXX)
       list(APPEND CXX_features ${feature})
     elseif (feature MATCHES "^c_")
@@ -405,24 +420,24 @@ function(write_compiler_detection_header
     endforeach()
 
     if(_lang STREQUAL CXX)
-      set(file_content "${file_content}\n#ifdef __cplusplus\n")
+      string(APPEND file_content "\n#ifdef __cplusplus\n")
     else()
-      set(file_content "${file_content}\n#ifndef __cplusplus\n")
+      string(APPEND file_content "\n#ifndef __cplusplus\n")
     endif()
 
     compiler_id_detection(ID_CONTENT ${_lang} PREFIX ${prefix_arg}_
       ID_DEFINE
     )
 
-    set(file_content "${file_content}${ID_CONTENT}\n")
+    string(APPEND file_content "${ID_CONTENT}\n")
 
     set(pp_if "if")
     foreach(compiler ${target_compilers})
-      set(file_content "${file_content}\n#  ${pp_if} ${prefix_arg}_COMPILER_IS_${compiler}\n")
+      string(APPEND file_content "\n#  ${pp_if} ${prefix_arg}_COMPILER_IS_${compiler}\n")
 
       if(_WCD_OUTPUT_FILES_VAR)
         set(compile_file_name "${_WCD_OUTPUT_DIR}${prefix_arg}_COMPILER_INFO_${compiler}_${_lang}.h")
-        set(file_content "${file_content}\n#    include \"${compile_file_name}\"\n")
+        string(APPEND file_content "\n#    include \"${compile_file_name}\"\n")
       endif()
 
       if(_WCD_OUTPUT_FILES_VAR)
@@ -431,10 +446,12 @@ function(write_compiler_detection_header
         set(compiler_file_content file_content)
       endif()
 
-      set(${compiler_file_content} "${${compiler_file_content}}
+      if(NOT _WCD_ALLOW_UNKNOWN_COMPILER_VERSIONS)
+        string(APPEND ${compiler_file_content} "
 #    if !(${_cmake_oldestSupported_${compiler}})
 #      error Unsupported compiler version
 #    endif\n")
+      endif()
 
       set(PREFIX ${prefix_arg}_)
       if (_need_hex_conversion)
@@ -445,7 +462,7 @@ function(write_compiler_detection_header
         set(MACRO_HEX)
       endif()
       string(CONFIGURE "${_compiler_id_version_compute_${compiler}}" VERSION_BLOCK @ONLY)
-      set(${compiler_file_content} "${${compiler_file_content}}${VERSION_BLOCK}\n")
+      string(APPEND ${compiler_file_content} "${VERSION_BLOCK}\n")
       set(PREFIX)
       set(MACRO_DEC)
       set(MACRO_HEX)
@@ -461,71 +478,49 @@ function(write_compiler_detection_header
           set(_define_item "\n#      define ${prefix_arg}_${feature_PP} 0\n")
           set(_define_item "\n#    if ${_cmake_feature_test_${compiler}_${feature}}\n#      define ${prefix_arg}_${feature_PP} 1\n#    else${_define_item}#    endif\n")
         endif()
-        set(${compiler_file_content} "${${compiler_file_content}}${_define_item}")
+        string(APPEND ${compiler_file_content} "${_define_item}")
       endforeach()
     endforeach()
     if(pp_if STREQUAL "elif")
-      set(file_content "${file_content}
+      if(_WCD_ALLOW_UNKNOWN_COMPILERS)
+        string(APPEND file_content "
+#  endif\n")
+      else()
+        string(APPEND file_content "
 #  else
 #    error Unsupported compiler
 #  endif\n")
+      endif()
     endif()
     foreach(feature ${${_lang}_features})
       string(TOUPPER ${feature} feature_upper)
       set(feature_PP "COMPILER_${feature_upper}")
       set(def_name ${prefix_arg}_${feature_PP})
-      if (feature STREQUAL c_restrict)
-        set(def_value "${prefix_arg}_RESTRICT")
-        set(file_content "${file_content}
-#  if ${def_name}
-#    define ${def_value} restrict
-#  else
-#    define ${def_value}
-#  endif
-\n")
-      endif()
-      if (feature STREQUAL cxx_constexpr)
-        set(def_value "${prefix_arg}_CONSTEXPR")
-        set(file_content "${file_content}
-#  if ${def_name}
-#    define ${def_value} constexpr
-#  else
-#    define ${def_value}
-#  endif
-\n")
-      endif()
-      if (feature STREQUAL cxx_final)
-        set(def_value "${prefix_arg}_FINAL")
-        set(file_content "${file_content}
-#  if ${def_name}
-#    define ${def_value} final
-#  else
-#    define ${def_value}
-#  endif
-\n")
-      endif()
-      if (feature STREQUAL cxx_override)
-        set(def_value "${prefix_arg}_OVERRIDE")
-        set(file_content "${file_content}
-#  if ${def_name}
-#    define ${def_value} override
-#  else
-#    define ${def_value}
-#  endif
-\n")
-      endif()
+      _simpledefine(c_restrict RESTRICT restrict "")
+      _simpledefine(cxx_constexpr CONSTEXPR constexpr "")
+      _simpledefine(cxx_final FINAL final "")
+      _simpledefine(cxx_override OVERRIDE override "")
       if (feature STREQUAL cxx_static_assert)
         set(def_value "${prefix_arg}_STATIC_ASSERT(X)")
         set(def_value_msg "${prefix_arg}_STATIC_ASSERT_MSG(X, MSG)")
-        set(static_assert_struct "template<bool> struct ${prefix_arg}StaticAssert;\ntemplate<> struct ${prefix_arg}StaticAssert<true>{};\n")
-        set(def_standard "#    define ${def_value} static_assert(X, #X)\n#    define ${def_value_msg} static_assert(X, MSG)")
-        set(def_alternative "${static_assert_struct}#    define ${def_value} sizeof(${prefix_arg}StaticAssert<X>)\n#    define ${def_value_msg} sizeof(${prefix_arg}StaticAssert<X>)")
-        set(file_content "${file_content}#  if ${def_name}\n${def_standard}\n#  else\n${def_alternative}\n#  endif\n\n")
+        set(def_fallback "enum { ${prefix_arg}_STATIC_ASSERT_JOIN(${prefix_arg}StaticAssertEnum, __LINE__) = sizeof(${prefix_arg}StaticAssert<X>) }")
+        string(APPEND file_content "#  if defined(${def_name}) && ${def_name}
+#    define ${def_value} static_assert(X, #X)
+#    define ${def_value_msg} static_assert(X, MSG)
+#  else
+#    define ${prefix_arg}_STATIC_ASSERT_JOIN(X, Y) ${prefix_arg}_STATIC_ASSERT_JOIN_IMPL(X, Y)
+#    define ${prefix_arg}_STATIC_ASSERT_JOIN_IMPL(X, Y) X##Y
+template<bool> struct ${prefix_arg}StaticAssert;
+template<> struct ${prefix_arg}StaticAssert<true>{};
+#    define ${def_value} ${def_fallback}
+#    define ${def_value_msg} ${def_fallback}
+#  endif
+\n")
       endif()
       if (feature STREQUAL cxx_alignas)
         set(def_value "${prefix_arg}_ALIGNAS(X)")
-        set(file_content "${file_content}
-#  if ${def_name}
+        string(APPEND file_content "
+#  if defined(${def_name}) && ${def_name}
 #    define ${def_value} alignas(X)
 #  elif ${prefix_arg}_COMPILER_IS_GNU || ${prefix_arg}_COMPILER_IS_Clang || ${prefix_arg}_COMPILER_IS_AppleClang
 #    define ${def_value} __attribute__ ((__aligned__(X)))
@@ -538,8 +533,8 @@ function(write_compiler_detection_header
       endif()
       if (feature STREQUAL cxx_alignof)
         set(def_value "${prefix_arg}_ALIGNOF(X)")
-        set(file_content "${file_content}
-#  if ${def_name}
+        string(APPEND file_content "
+#  if defined(${def_name}) && ${def_name}
 #    define ${def_value} alignof(X)
 #  elif ${prefix_arg}_COMPILER_IS_GNU || ${prefix_arg}_COMPILER_IS_Clang || ${prefix_arg}_COMPILER_IS_AppleClang
 #    define ${def_value} __alignof__(X)
@@ -548,30 +543,12 @@ function(write_compiler_detection_header
 #  endif
 \n")
       endif()
-      if (feature STREQUAL cxx_deleted_functions)
-        set(def_value "${prefix_arg}_DELETED_FUNCTION")
-        set(file_content "${file_content}
-#  if ${def_name}
-#    define ${def_value} = delete
-#  else
-#    define ${def_value}
-#  endif
-\n")
-      endif()
-      if (feature STREQUAL cxx_extern_templates)
-        set(def_value "${prefix_arg}_EXTERN_TEMPLATE")
-        set(file_content "${file_content}
-#  if ${def_name}
-#    define ${def_value} extern
-#  else
-#    define ${def_value}
-#  endif
-\n")
-      endif()
+      _simpledefine(cxx_deleted_functions DELETED_FUNCTION "= delete" "")
+      _simpledefine(cxx_extern_templates EXTERN_TEMPLATE extern "")
       if (feature STREQUAL cxx_noexcept)
         set(def_value "${prefix_arg}_NOEXCEPT")
-        set(file_content "${file_content}
-#  if ${def_name}
+        string(APPEND file_content "
+#  if defined(${def_name}) && ${def_name}
 #    define ${def_value} noexcept
 #    define ${def_value}_EXPR(X) noexcept(X)
 #  else
@@ -580,20 +557,11 @@ function(write_compiler_detection_header
 #  endif
 \n")
       endif()
-      if (feature STREQUAL cxx_nullptr)
-        set(def_value "${prefix_arg}_NULLPTR")
-        set(file_content "${file_content}
-#  if ${def_name}
-#    define ${def_value} nullptr
-#  else
-#    define ${def_value} 0
-#  endif
-\n")
-      endif()
+      _simpledefine(cxx_nullptr NULLPTR nullptr 0)
       if (feature STREQUAL cxx_thread_local)
         set(def_value "${prefix_arg}_THREAD_LOCAL")
-        set(file_content "${file_content}
-#  if ${def_name}
+        string(APPEND file_content "
+#  if defined(${def_name}) && ${def_name}
 #    define ${def_value} thread_local
 #  elif ${prefix_arg}_COMPILER_IS_GNU || ${prefix_arg}_COMPILER_IS_Clang || ${prefix_arg}_COMPILER_IS_AppleClang
 #    define ${def_value} __thread
@@ -607,9 +575,9 @@ function(write_compiler_detection_header
       if (feature STREQUAL cxx_attribute_deprecated)
         set(def_name ${prefix_arg}_${feature_PP})
         set(def_value "${prefix_arg}_DEPRECATED")
-        set(file_content "${file_content}
+        string(APPEND file_content "
 #  ifndef ${def_value}
-#    if ${def_name}
+#    if defined(${def_name}) && ${def_name}
 #      define ${def_value} [[deprecated]]
 #      define ${def_value}_MSG(MSG) [[deprecated(MSG)]]
 #    elif ${prefix_arg}_COMPILER_IS_GNU || ${prefix_arg}_COMPILER_IS_Clang
@@ -627,7 +595,7 @@ function(write_compiler_detection_header
       endif()
     endforeach()
 
-    set(file_content "${file_content}#endif\n")
+    string(APPEND file_content "#endif\n")
 
   endforeach()
 
@@ -636,7 +604,7 @@ function(write_compiler_detection_header
       foreach(_lang ${_langs})
         if(compiler_file_content_${compiler}_${_lang})
           set(CMAKE_CONFIGURABLE_FILE_CONTENT "${compiler_file_content_}")
-          set(CMAKE_CONFIGURABLE_FILE_CONTENT "${CMAKE_CONFIGURABLE_FILE_CONTENT}${compiler_file_content_${compiler}_${_lang}}")
+          string(APPEND CMAKE_CONFIGURABLE_FILE_CONTENT "${compiler_file_content_${compiler}_${_lang}}")
 
           set(compile_file_name "${_WCD_OUTPUT_DIR}${prefix_arg}_COMPILER_INFO_${compiler}_${_lang}.h")
           set(full_path "${main_file_dir}/${compile_file_name}")
@@ -652,9 +620,9 @@ function(write_compiler_detection_header
   endif()
 
   if (_WCD_EPILOG)
-    set(file_content "${file_content}\n${_WCD_EPILOG}\n")
+    string(APPEND file_content "\n${_WCD_EPILOG}\n")
   endif()
-  set(file_content "${file_content}\n#endif")
+  string(APPEND file_content "\n#endif")
 
   set(CMAKE_CONFIGURABLE_FILE_CONTENT ${file_content})
   configure_file("${CMAKE_ROOT}/Modules/CMakeConfigurableFile.in"

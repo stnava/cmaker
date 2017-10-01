@@ -1,31 +1,24 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindCygwin
 # ----------
 #
 # this module looks for Cygwin
 
-#=============================================================================
-# Copyright 2001-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
 if (WIN32)
-  find_path(CYGWIN_INSTALL_PATH
+  if(CYGWIN_INSTALL_PATH)
+    set(CYGWIN_BAT "${CYGWIN_INSTALL_PATH}/cygwin.bat")
+  endif()
+
+  find_program(CYGWIN_BAT
     cygwin.bat
     "C:/Cygwin"
     "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Cygwin\\setup;rootdir]"
     "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Cygnus Solutions\\Cygwin\\mounts v2\\/;native]"
   )
+  get_filename_component(CYGWIN_INSTALL_PATH "${CYGWIN_BAT}" DIRECTORY)
+  mark_as_advanced(CYGWIN_BAT)
 
-  mark_as_advanced(
-    CYGWIN_INSTALL_PATH
-  )
 endif ()

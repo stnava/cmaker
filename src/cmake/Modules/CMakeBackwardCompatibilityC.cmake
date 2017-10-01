@@ -1,26 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2002-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
-# Nothing here yet
-if(CMAKE_GENERATOR MATCHES "Visual Studio 7")
-  include(CMakeVS7BackwardCompatibility)
-  set(CMAKE_SKIP_COMPATIBILITY_TESTS 1)
-endif()
-if(CMAKE_GENERATOR MATCHES "Visual Studio 6")
-  include(CMakeVS6BackwardCompatibility)
-  set(CMAKE_SKIP_COMPATIBILITY_TESTS 1)
-endif()
 
 if(NOT CMAKE_SKIP_COMPATIBILITY_TESTS)
   # Old CMake versions did not support OS X universal binaries anyway,

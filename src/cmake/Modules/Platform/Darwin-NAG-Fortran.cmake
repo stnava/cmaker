@@ -1,22 +1,11 @@
-#=============================================================================
-# Copyright 2010 Kitware, Inc.
-# Copyright 2013 OpenGamma Ltd. <graham@opengamma.com>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
 set(CMAKE_Fortran_VERBOSE_FLAG "-Wl,-v") # Runs gcc under the hood.
 
 # Need -fpp explicitly on case-insensitive filesystem.
 set(CMAKE_Fortran_COMPILE_OBJECT
-  "<CMAKE_Fortran_COMPILER> -fpp -o <OBJECT> <DEFINES> <FLAGS> -c <SOURCE>")
+  "<CMAKE_Fortran_COMPILER> -fpp -o <OBJECT> <DEFINES> <INCLUDES> <FLAGS> -c <SOURCE>")
 
 set(CMAKE_Fortran_OSX_COMPATIBILITY_VERSION_FLAG "-Wl,-compatibility_version -Wl,")
 set(CMAKE_Fortran_OSX_CURRENT_VERSION_FLAG "-Wl,-current_version -Wl,")

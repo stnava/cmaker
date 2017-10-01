@@ -1,19 +1,11 @@
-#=============================================================================
-# CMake - Cross Platform Makefile Generator
-# Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
 project(QtDialog)
 if(POLICY CMP0020)
   cmake_policy(SET CMP0020 NEW) # Drop when CMake >= 2.8.11 required
 endif()
+CMake_OPTIONAL_COMPONENT(cmake-gui)
 find_package(Qt5Widgets QUIET)
 if (Qt5Widgets_FOUND)
   include_directories(${Qt5Widgets_INCLUDE_DIRS})
@@ -35,35 +27,60 @@ if (Qt5Widgets_FOUND)
 
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${Qt5Widgets_EXECUTABLE_COMPILE_FLAGS}")
 
-  # We need to install Cocoa platform plugin and add qt.conf for Qt5 on Mac.
+  if(CMake_QT_STATIC_QXcbIntegrationPlugin_LIBRARIES)
+    list(APPEND CMake_QT_LIBRARIES ${CMake_QT_STATIC_QXcbIntegrationPlugin_LIBRARIES})
+    set_property(SOURCE CMakeSetup.cxx
+      PROPERTY COMPILE_DEFINITIONS USE_QXcbIntegrationPlugin)
+  endif()
+
+  # We need to install platform plugin and add qt.conf for Qt5 on Mac and Windows.
   # FIXME: This should be part of Qt5 CMake scripts, but unfortunatelly
-  # Qt5 Mac support is missing there.
-  if(APPLE)
+  # Qt5 support is missing there.
+  if(CMake_INSTALL_DEPENDENCIES AND (APPLE OR WIN32))
     macro(install_qt5_plugin _qt_plugin_name _qt_plugins_var)
       get_target_property(_qt_plugin_path "${_qt_plugin_name}" LOCATION)
       if(EXISTS "${_qt_plugin_path}")
         get_filename_component(_qt_plugin_file "${_qt_plugin_path}" NAME)
         get_filename_component(_qt_plugin_type "${_qt_plugin_path}" PATH)
         get_filename_component(_qt_plugin_type "${_qt_plugin_type}" NAME)
-        set(_qt_plugin_dest "${CMAKE_INSTALL_PREFIX}/PlugIns/${_qt_plugin_type}")
+        if(APPLE)
+          set(_qt_plugin_dir "PlugIns")
+        elseif(WIN32)
+          set(_qt_plugin_dir "plugins")
+        endif()
+        set(_qt_plugin_dest "${_qt_plugin_dir}/${_qt_plugin_type}")
         install(FILES "${_qt_plugin_path}"
-          DESTINATION "${_qt_plugin_dest}")
+          DESTINATION "${_qt_plugin_dest}"
+          ${COMPONENT})
         set(${_qt_plugins_var}
-          "${${_qt_plugins_var}};${_qt_plugin_dest}/${_qt_plugin_file}")
+          "${${_qt_plugins_var}};\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${_qt_plugin_dest}/${_qt_plugin_file}")
       else()
         message(FATAL_ERROR "QT plugin ${_qt_plugin_name} not found")
       endif()
     endmacro()
-    install_qt5_plugin("Qt5::QCocoaIntegrationPlugin" QT_PLUGINS)
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
-      "[Paths]\nPlugins = PlugIns\n")
-    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
-      DESTINATION "${CMAKE_INSTALL_PREFIX}/Resources")
+    if(APPLE)
+      install_qt5_plugin("Qt5::QCocoaIntegrationPlugin" QT_PLUGINS)
+      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
+        "[Paths]\nPlugins = ${_qt_plugin_dir}\n")
+      install(FILES "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
+        DESTINATION "${CMAKE_INSTALL_PREFIX}/Resources"
+        ${COMPONENT})
+    elseif(WIN32)
+      install_qt5_plugin("Qt5::QWindowsIntegrationPlugin" QT_PLUGINS)
+      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
+        "[Paths]\nPlugins = ../${_qt_plugin_dir}\n")
+      install(FILES "${CMAKE_CURRENT_BINARY_DIR}/qt.conf"
+        DESTINATION bin
+        ${COMPONENT})
+    endif()
   endif()
 
-  if(WIN32 AND TARGET Qt5::Core)
+  if(TARGET Qt5::Core)
     get_property(_Qt5_Core_LOCATION TARGET Qt5::Core PROPERTY LOCATION)
     get_filename_component(Qt_BIN_DIR "${_Qt5_Core_LOCATION}" PATH)
+    if(APPLE)
+      get_filename_component(Qt_BIN_DIR "${Qt_BIN_DIR}" PATH)
+    endif()
   endif()
 else()
   set(QT_MIN_VERSION "4.4.0")
@@ -77,12 +94,6 @@ else()
 
   set(CMake_QT_LIBRARIES ${QT_LIBRARIES})
 
-  if(WIN32 AND EXISTS "${QT_QMAKE_EXECUTABLE}")
-    get_filename_component(_Qt_BIN_DIR "${QT_QMAKE_EXECUTABLE}" PATH)
-    if(EXISTS "${_Qt_BIN_DIR}/QtCore4.dll")
-      set(Qt_BIN_DIR ${_Qt_BIN_DIR})
-    endif()
-  endif()
 endif()
 
 set(SRCS
@@ -99,15 +110,18 @@ set(SRCS
   QCMakeCacheView.h
   QCMakeWidgets.cxx
   QCMakeWidgets.h
-  QMacInstallDialog.cxx
-  QMacInstallDialog.h
+  RegexExplorer.cxx
+  RegexExplorer.h
+  WarningMessagesDialog.cxx
+  WarningMessagesDialog.h
   )
 QT4_WRAP_UI(UI_SRCS
   CMakeSetupDialog.ui
   Compilers.ui
   CrossCompiler.ui
   AddCacheEntry.ui
-  MacInstallDialog.ui
+  RegexExplorer.ui
+  WarningMessagesDialog.ui
   )
 QT4_WRAP_CPP(MOC_SRCS
   AddCacheEntry.h
@@ -117,7 +131,8 @@ QT4_WRAP_CPP(MOC_SRCS
   QCMake.h
   QCMakeCacheView.h
   QCMakeWidgets.h
-  QMacInstallDialog.h
+  RegexExplorer.h
+  WarningMessagesDialog.h
   )
 QT4_ADD_RESOURCES(RC_SRCS CMakeSetup.qrc)
 
@@ -132,20 +147,37 @@ if(APPLE)
     MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
-if(CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL)
-  install(FILES ${CMake_SOURCE_DIR}/Licenses/LGPLv2.1.txt
-    DESTINATION ${CMAKE_DATA_DIR}/Licenses)
+if(USE_LGPL)
+  install(FILES ${CMake_SOURCE_DIR}/Licenses/LGPLv${USE_LGPL}.txt
+    DESTINATION ${CMAKE_DATA_DIR}/Licenses
+    ${COMPONENT})
   set_property(SOURCE CMakeSetupDialog.cxx
-    PROPERTY COMPILE_DEFINITIONS CMake_GUI_DISTRIBUTE_WITH_Qt_LGPL)
+    PROPERTY COMPILE_DEFINITIONS USE_LGPL="${USE_LGPL}")
 endif()
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-add_executable(cmake-gui WIN32 MACOSX_BUNDLE ${SRCS})
+add_executable(cmake-gui WIN32 MACOSX_BUNDLE ${SRCS} ${MANIFEST_FILE})
 target_link_libraries(cmake-gui CMakeLib ${QT_QTMAIN_LIBRARY} ${CMake_QT_LIBRARIES})
-if(Qt_BIN_DIR)
-  set_property(TARGET cmake-gui PROPERTY Qt_BIN_DIR ${Qt_BIN_DIR})
-endif()
+
+# cmake-gui has not been updated for `include-what-you-use`.
+# Block the tool until this is done.
+set_target_properties(cmake-gui PROPERTIES
+  CXX_INCLUDE_WHAT_YOU_USE ""
+  )
+
+# Files generated by MOC, RCC, and UIC may produce clang-tidy warnings.
+# We generate a dummy .clang-tidy file in the binary directory that disables
+# all clang-tidy checks except one that will never match.  This one check is
+# necessary; clang-tidy reports an error when no checks are enabled.
+# Since the Qt code generators will generate source files in the binary tree,
+# clang-tidy will load the configuration from this dummy file when the sources
+# are built.
+file(WRITE "${QtDialog_BINARY_DIR}/.clang-tidy" "
+---
+Checks: '-*,llvm-twine-local'
+...
+")
 
 if(APPLE)
   file(STRINGS "${CMake_SOURCE_DIR}/Copyright.txt" copyright_line
@@ -157,6 +189,7 @@ if(APPLE)
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${CMAKE_BUNDLE_VERSION}"
     # TBD: MACOSX_BUNDLE_BUNDLE_VERSION "${CMAKE_BUNDLE_VERSION}"
     MACOSX_BUNDLE_COPYRIGHT "${copyright_line}"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "org.cmake.cmake"
     )
 
   # Create a symlink in the build tree to provide a "cmake-gui" next
@@ -167,30 +200,39 @@ if(APPLE)
     )
 endif()
 set(CMAKE_INSTALL_DESTINATION_ARGS
-  BUNDLE DESTINATION "${CMAKE_BUNDLE_LOCATION}")
+  BUNDLE DESTINATION "${CMAKE_BUNDLE_LOCATION}" ${COMPONENT})
 
-install(TARGETS cmake-gui RUNTIME DESTINATION bin ${CMAKE_INSTALL_DESTINATION_ARGS})
+install(TARGETS cmake-gui
+  RUNTIME DESTINATION bin ${COMPONENT}
+  ${CMAKE_INSTALL_DESTINATION_ARGS})
 
 if(UNIX AND NOT APPLE)
   foreach (size IN ITEMS 32 128)
     install(
       FILES       "${CMAKE_CURRENT_SOURCE_DIR}/CMakeSetup${size}.png"
-      DESTINATION "share/icons/hicolor/${size}x${size}/apps"
+      DESTINATION "${CMAKE_XDGDATA_DIR}/icons/hicolor/${size}x${size}/apps"
+      ${COMPONENT}
       RENAME      "CMakeSetup.png")
   endforeach ()
 
   # install a desktop file so CMake appears in the application start menu
   # with an icon
-  install(FILES CMake.desktop DESTINATION share/applications )
-  install(FILES cmakecache.xml DESTINATION share/mime/packages )
+  install(FILES cmake-gui.desktop
+    DESTINATION "${CMAKE_XDGDATA_DIR}/applications"
+    ${COMPONENT})
+  install(FILES cmakecache.xml
+    DESTINATION "${CMAKE_XDGDATA_DIR}/mime/packages"
+    ${COMPONENT})
 endif()
 
 if(APPLE)
-  install(CODE "execute_process(COMMAND ln -s \"../MacOS/CMake\" cmake-gui
-                WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin)")
+  install(CODE "
+    execute_process(COMMAND ln -s \"../MacOS/CMake\" cmake-gui
+        WORKING_DIRECTORY \$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin)
+  " ${COMPONENT})
 endif()
 
-if(APPLE OR WIN32)
+if(CMake_INSTALL_DEPENDENCIES AND (APPLE OR WIN32))
   # install rules for including 3rd party libs such as Qt
   # if a system Qt is used (e.g. installed in /usr/lib/), it will not be included in the installation
   set(fixup_exe "\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/bin/cmake-gui${CMAKE_EXECUTABLE_SUFFIX}")
@@ -200,8 +242,8 @@ if(APPLE OR WIN32)
   install(CODE "
     include(\"${CMake_SOURCE_DIR}/Modules/BundleUtilities.cmake\")
     set(BU_CHMOD_BUNDLE_ITEMS ON)
-    fixup_bundle(\"${fixup_exe}\" \"${QT_PLUGINS}\" \"${QT_LIBRARY_DIR};${QT_BINARY_DIR}\")
-  ")
+    fixup_bundle(\"${fixup_exe}\" \"${QT_PLUGINS}\" \"${Qt_BIN_DIR};${QT_LIBRARY_DIR};${QT_BINARY_DIR}\")
+  " ${COMPONENT})
 endif()
 
 set(CMAKE_PACKAGE_QTGUI TRUE)

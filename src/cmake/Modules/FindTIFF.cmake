@@ -1,40 +1,60 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindTIFF
 # --------
 #
-# Find TIFF library
+# Find the TIFF library (libtiff).
 #
-# Find the native TIFF includes and library This module defines
+# Imported targets
+# ^^^^^^^^^^^^^^^^
 #
-# ::
+# This module defines the following :prop_tgt:`IMPORTED` targets:
 #
-#   TIFF_INCLUDE_DIR, where to find tiff.h, etc.
-#   TIFF_LIBRARIES, libraries to link against to use TIFF.
-#   TIFF_FOUND, If false, do not try to use TIFF.
+# ``TIFF::TIFF``
+#   The TIFF library, if found.
 #
-# also defined, but not for general use are
+# Result variables
+# ^^^^^^^^^^^^^^^^
 #
-# ::
+# This module will set the following variables in your project:
 #
-#   TIFF_LIBRARY, where to find the TIFF library.
-
-#=============================================================================
-# Copyright 2002-2009 Kitware, Inc.
+# ``TIFF_FOUND``
+#   true if the TIFF headers and libraries were found
+# ``TIFF_INCLUDE_DIR``
+#   the directory containing the TIFF headers
+# ``TIFF_INCLUDE_DIRS``
+#   the directory containing the TIFF headers
+# ``TIFF_LIBRARIES``
+#   TIFF libraries to be linked
 #
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
+# Cache variables
+# ^^^^^^^^^^^^^^^
 #
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
+# The following cache variables may also be set:
+#
+# ``TIFF_INCLUDE_DIR``
+#   the directory containing the TIFF headers
+# ``TIFF_LIBRARY``
+#   the path to the TIFF library
 
 find_path(TIFF_INCLUDE_DIR tiff.h)
 
 set(TIFF_NAMES ${TIFF_NAMES} tiff libtiff tiff3 libtiff3)
-find_library(TIFF_LIBRARY NAMES ${TIFF_NAMES} )
+foreach(name ${TIFF_NAMES})
+  list(APPEND TIFF_NAMES_DEBUG "${name}d")
+endforeach()
+
+if(NOT TIFF_LIBRARY)
+  find_library(TIFF_LIBRARY_RELEASE NAMES ${TIFF_NAMES})
+  find_library(TIFF_LIBRARY_DEBUG NAMES ${TIFF_NAMES_DEBUG})
+  include(${CMAKE_CURRENT_LIST_DIR}/SelectLibraryConfigurations.cmake)
+  select_library_configurations(TIFF)
+  mark_as_advanced(TIFF_LIBRARY_RELEASE TIFF_LIBRARY_DEBUG)
+endif()
+unset(TIFF_NAMES)
+unset(TIFF_NAMES_DEBUG)
 
 if(TIFF_INCLUDE_DIR AND EXISTS "${TIFF_INCLUDE_DIR}/tiffvers.h")
     file(STRINGS "${TIFF_INCLUDE_DIR}/tiffvers.h" tiff_version_str
@@ -45,15 +65,41 @@ if(TIFF_INCLUDE_DIR AND EXISTS "${TIFF_INCLUDE_DIR}/tiffvers.h")
     unset(tiff_version_str)
 endif()
 
-# handle the QUIETLY and REQUIRED arguments and set TIFF_FOUND to TRUE if
-# all listed variables are TRUE
 include(${CMAKE_CURRENT_LIST_DIR}/FindPackageHandleStandardArgs.cmake)
 FIND_PACKAGE_HANDLE_STANDARD_ARGS(TIFF
                                   REQUIRED_VARS TIFF_LIBRARY TIFF_INCLUDE_DIR
                                   VERSION_VAR TIFF_VERSION_STRING)
 
 if(TIFF_FOUND)
-  set( TIFF_LIBRARIES ${TIFF_LIBRARY} )
+  set(TIFF_LIBRARIES ${TIFF_LIBRARY})
+  set(TIFF_INCLUDE_DIRS "${TIFF_INCLUDE_DIR}")
+
+  if(NOT TARGET TIFF::TIFF)
+    add_library(TIFF::TIFF UNKNOWN IMPORTED)
+    if(TIFF_INCLUDE_DIRS)
+      set_target_properties(TIFF::TIFF PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${TIFF_INCLUDE_DIRS}")
+    endif()
+    if(EXISTS "${TIFF_LIBRARY}")
+      set_target_properties(TIFF::TIFF PROPERTIES
+        IMPORTED_LINK_INTERFACE_LANGUAGES "C"
+        IMPORTED_LOCATION "${TIFF_LIBRARY}")
+    endif()
+    if(EXISTS "${TIFF_LIBRARY_RELEASE}")
+      set_property(TARGET TIFF::TIFF APPEND PROPERTY
+        IMPORTED_CONFIGURATIONS RELEASE)
+      set_target_properties(TIFF::TIFF PROPERTIES
+        IMPORTED_LINK_INTERFACE_LANGUAGES_RELEASE "C"
+        IMPORTED_LOCATION_RELEASE "${TIFF_LIBRARY_RELEASE}")
+    endif()
+    if(EXISTS "${TIFF_LIBRARY_DEBUG}")
+      set_property(TARGET TIFF::TIFF APPEND PROPERTY
+        IMPORTED_CONFIGURATIONS DEBUG)
+      set_target_properties(TIFF::TIFF PROPERTIES
+        IMPORTED_LINK_INTERFACE_LANGUAGES_DEBUG "C"
+        IMPORTED_LOCATION_DEBUG "${TIFF_LIBRARY_DEBUG}")
+    endif()
+  endif()
 endif()
 
 mark_as_advanced(TIFF_INCLUDE_DIR TIFF_LIBRARY)

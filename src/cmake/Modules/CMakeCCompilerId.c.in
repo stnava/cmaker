@@ -5,6 +5,11 @@
 #if defined(__18CXX)
 # define ID_VOID_MAIN
 #endif
+#if defined(__CLASSIC_C__)
+/* cv-qualifiers did not exist in K&R C */
+# define const
+# define volatile
+#endif
 
 @CMAKE_C_COMPILER_ID_CONTENT@
 
@@ -21,15 +26,39 @@ char const* info_simulate = "INFO" ":" "simulate[" SIMULATE_ID "]";
 char const* qnxnto = "INFO" ":" "qnxnto[]";
 #endif
 
+#if defined(__CRAYXE) || defined(__CRAYXC)
+char const *info_cray = "INFO" ":" "compiler_wrapper[CrayPrgEnv]";
+#endif
+
 @CMAKE_C_COMPILER_ID_PLATFORM_CONTENT@
 @CMAKE_C_COMPILER_ID_ERROR_FOR_TEST@
+
+#if !defined(__STDC__)
+# if defined(_MSC_VER) && !defined(__clang__)
+#  define C_DIALECT "90"
+# else
+#  define C_DIALECT
+# endif
+#elif __STDC_VERSION__ >= 201000L
+# define C_DIALECT "11"
+#elif __STDC_VERSION__ >= 199901L
+# define C_DIALECT "99"
+#else
+# define C_DIALECT "90"
+#endif
+const char* info_language_dialect_default =
+  "INFO" ":" "dialect_default[" C_DIALECT "]";
 
 /*--------------------------------------------------------------------------*/
 
 #ifdef ID_VOID_MAIN
 void main() {}
 #else
+# if defined(__CLASSIC_C__)
+int main(argc, argv) int argc; char *argv[];
+# else
 int main(int argc, char* argv[])
+# endif
 {
   int require = 0;
   require += info_compiler[argc];
@@ -44,6 +73,10 @@ int main(int argc, char* argv[])
 #ifdef SIMULATE_VERSION_MAJOR
   require += info_simulate_version[argc];
 #endif
+#if defined(__CRAYXE) || defined(__CRAYXC)
+  require += info_cray[argc];
+#endif
+  require += info_language_dialect_default[argc];
   (void)argv;
   return require;
 }

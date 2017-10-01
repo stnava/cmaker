@@ -1,18 +1,9 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmVersion_h
 #define cmVersion_h
 
-#include "cmStandardIncludes.h"
+#include "cm_kwiml.h"
 
 /** \class cmVersion
  * \brief Helper class for providing CMake and CTest version information.
@@ -34,11 +25,10 @@ public:
 
 /* Encode with room for up to 1000 minor releases between major releases
    and to encode dates until the year 10000 in the patch level.  */
-#define CMake_VERSION_ENCODE__BASE cmIML_INT_UINT64_C(100000000)
-#define CMake_VERSION_ENCODE(major, minor, patch) \
-  ((((major) * 1000u) * CMake_VERSION_ENCODE__BASE) + \
-   (((minor) % 1000u) * CMake_VERSION_ENCODE__BASE) + \
-   (((patch)          % CMake_VERSION_ENCODE__BASE)))
+#define CMake_VERSION_ENCODE__BASE KWIML_INT_UINT64_C(100000000)
+#define CMake_VERSION_ENCODE(major, minor, patch)                             \
+  ((((major)*1000u) * CMake_VERSION_ENCODE__BASE) +                           \
+   (((minor) % 1000u) * CMake_VERSION_ENCODE__BASE) +                         \
+   (((patch) % CMake_VERSION_ENCODE__BASE)))
 
 #endif
-

@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # CPackNSIS
 # ---------
@@ -29,6 +32,14 @@
 # .. variable:: CPACK_NSIS_INSTALLER_MUI_ICON_CODE
 #
 #  undocumented.
+#
+# .. variable:: CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP
+#
+#  The filename of a bitmap to use as the NSIS MUI_WELCOMEFINISHPAGE_BITMAP.
+#
+# .. variable:: CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP
+#
+#  The filename of a bitmap to use as the NSIS MUI_UNWELCOMEFINISHPAGE_BITMAP.
 #
 # .. variable:: CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS
 #
@@ -88,6 +99,11 @@
 #  Contact information for questions and comments about the installation
 #  process.
 #
+# .. variable:: CPACK_NSIS_<compName>_INSTALL_DIRECTORY
+#
+#  Custom install directory for the specified component <compName> instead
+#  of $INSTDIR.
+#
 # .. variable:: CPACK_NSIS_CREATE_ICONS_EXTRA
 #
 #  Additional NSIS commands for creating start menu shortcuts.
@@ -115,21 +131,8 @@
 #
 #   set(CPACK_NSIS_MENU_LINKS
 #       "doc/cmake-@CMake_VERSION_MAJOR@.@CMake_VERSION_MINOR@/cmake.html"
-#       "CMake Help" "http://www.cmake.org" "CMake Web Site")
+#       "CMake Help" "https://cmake.org" "CMake Web Site")
 #
-
-#=============================================================================
-# Copyright 2006-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 #FIXME we should put NSIS specific code here
 #FIXME but I'm not doing it because I'm not able to test it...

@@ -1,27 +1,18 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2012 Nicolas Despres <nicolas.despres@gmail.com>
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmOSXBundleGenerator_h
 #define cmOSXBundleGenerator_h
 
-#include "cmStandardIncludes.h"
-#include "cmSourceFile.h"
+#include "cmConfigure.h" // IWYU pragma: keep
 
-#include <string>
 #include <set>
+#include <string>
+#include <vector>
 
-class cmTarget;
-class cmMakefile;
-class cmLocalGenerator;
 class cmGeneratorTarget;
+class cmLocalGenerator;
+class cmMakefile;
+class cmSourceFile;
 
 class cmOSXBundleGenerator
 {
@@ -34,12 +25,10 @@ public:
   void CreateAppBundle(const std::string& targetName, std::string& root);
 
   // create a framework at a given root
-  void CreateFramework(const std::string& targetName,
-                       const std::string& root);
+  void CreateFramework(const std::string& targetName, const std::string& root);
 
   // create a cf bundle at a given root
-  void CreateCFBundle(const std::string& targetName,
-                      const std::string& root);
+  void CreateCFBundle(const std::string& targetName, const std::string& root);
 
   struct MacOSXContentGeneratorType
   {
@@ -54,7 +43,9 @@ public:
   std::string InitMacOSXContentDirectory(const char* pkgloc);
 
   void SetMacContentFolders(std::set<std::string>* macContentFolders)
-  { this->MacContentFolders = macContentFolders; }
+  {
+    this->MacContentFolders = macContentFolders;
+  }
 
 private:
   bool MustSkip();
@@ -66,6 +57,5 @@ private:
   std::string ConfigName;
   std::set<std::string>* MacContentFolders;
 };
-
 
 #endif

@@ -1,16 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2004-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 set(CMAKE_SHARED_LIBRARY_C_FLAGS "")            # -pic
 set(CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS "-shared")       # -shared
@@ -44,13 +34,16 @@ set (CMAKE_SKIP_INSTALL_RPATH "NO" CACHE BOOL
 
 set(CMAKE_VERBOSE_MAKEFILE FALSE CACHE BOOL "If this value is on, makefiles will be generated without the .SILENT directive, and all commands will be echoed to the console during the make.  This is useful for debugging only. With Visual Studio IDE projects all commands are done without /nologo.")
 
-if(CMAKE_GENERATOR MATCHES "Makefiles")
+if(CMAKE_GENERATOR MATCHES "Make")
   set(CMAKE_COLOR_MAKEFILE ON CACHE BOOL
     "Enable/Disable color output during build."
     )
   mark_as_advanced(CMAKE_COLOR_MAKEFILE)
   if(DEFINED CMAKE_RULE_MESSAGES)
     set_property(GLOBAL PROPERTY RULE_MESSAGES ${CMAKE_RULE_MESSAGES})
+  endif()
+  if(DEFINED CMAKE_TARGET_MESSAGES)
+    set_property(GLOBAL PROPERTY TARGET_MESSAGES ${CMAKE_TARGET_MESSAGES})
   endif()
   if(CMAKE_GENERATOR MATCHES "Unix Makefiles")
     set(CMAKE_EXPORT_COMPILE_COMMANDS OFF CACHE BOOL

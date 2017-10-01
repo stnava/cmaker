@@ -24,7 +24,28 @@
 // Solaris
 #if defined(__sun)
 # include <ieeefp.h>
-# define isfinite finite
+# if !defined(isfinite)
+#  define isfinite finite
+# endif
+#endif
+
+// AIX
+#if defined(_AIX)
+# if !defined(isfinite)
+#  define isfinite finite
+# endif
+#endif
+
+// HP-UX
+#if defined(__hpux)
+# if !defined(isfinite)
+#  if defined(__ia64) && !defined(finite)
+#   define isfinite(x) ((sizeof(x) == sizeof(float) ? \
+                        _Isfinitef(x) : _Isfinite(x)))
+#  else
+#   define isfinite finite
+#  endif
+# endif
 #endif
 
 // Ancient glibc

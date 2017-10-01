@@ -1,56 +1,57 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2013 Stephen Kelly <steveire@gmail.com>
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
+#ifndef cmExportTryCompileFileGenerator_h
+#define cmExportTryCompileFileGenerator_h
 
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-#ifndef cmExportInstallFileGenerator_h
-#define cmExportInstallFileGenerator_h
+#include "cmConfigure.h"
 
 #include "cmExportFileGenerator.h"
 
-class cmInstallExportGenerator;
-class cmInstallTargetGenerator;
+#include <iosfwd>
+#include <set>
+#include <string>
+#include <vector>
 
-class cmExportTryCompileFileGenerator: public cmExportFileGenerator
+class cmGeneratorTarget;
+class cmGlobalGenerator;
+class cmMakefile;
+
+class cmExportTryCompileFileGenerator : public cmExportFileGenerator
 {
 public:
+  cmExportTryCompileFileGenerator(cmGlobalGenerator* gg,
+                                  std::vector<std::string> const& targets,
+                                  cmMakefile* mf);
+
   /** Set the list of targets to export.  */
-  void SetExports(const std::vector<cmTarget const*> &exports)
-    { this->Exports = exports; }
   void SetConfig(const std::string& config) { this->Config = config; }
 protected:
-
   // Implement virtual methods from the superclass.
-  virtual bool GenerateMainFile(std::ostream& os);
+  bool GenerateMainFile(std::ostream& os) CM_OVERRIDE;
 
-  virtual void GenerateImportTargetsConfig(std::ostream&,
-                                           const std::string&,
-                                           std::string const&,
-                            std::vector<std::string>&) {}
-  virtual void HandleMissingTarget(std::string&,
-                                   std::vector<std::string>&,
-                                   cmMakefile*,
-                                   cmTarget*,
-                                   cmTarget*) {}
+  void GenerateImportTargetsConfig(std::ostream&, const std::string&,
+                                   std::string const&,
+                                   std::vector<std::string>&) CM_OVERRIDE
+  {
+  }
+  void HandleMissingTarget(std::string&, std::vector<std::string>&,
+                           cmGeneratorTarget*, cmGeneratorTarget*) CM_OVERRIDE
+  {
+  }
 
-  void PopulateProperties(cmTarget const* target,
+  void PopulateProperties(cmGeneratorTarget const* target,
                           ImportPropertyMap& properties,
-                          std::set<cmTarget const*> &emitted);
+                          std::set<const cmGeneratorTarget*>& emitted);
 
-  std::string InstallNameDir(cmTarget* target,
-                             const std::string& config);
+  std::string InstallNameDir(cmGeneratorTarget* target,
+                             const std::string& config) CM_OVERRIDE;
+
 private:
-  std::string FindTargets(const std::string& prop, cmTarget const* tgt,
-                   std::set<cmTarget const*> &emitted);
+  std::string FindTargets(const std::string& prop,
+                          const cmGeneratorTarget* tgt,
+                          std::set<const cmGeneratorTarget*>& emitted);
 
-
-  std::vector<cmTarget const*> Exports;
+  std::vector<cmGeneratorTarget const*> Exports;
   std::string Config;
 };
 

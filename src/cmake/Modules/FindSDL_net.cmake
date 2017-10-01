@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindSDL_net
 # -----------
@@ -15,7 +18,7 @@
 #
 #
 #
-# For backward compatiblity the following variables are also set:
+# For backward compatibility the following variables are also set:
 #
 # ::
 #
@@ -31,20 +34,6 @@
 # Created by Eric Wing.  This was influenced by the FindSDL.cmake
 # module, but with modifications to recognize OS X frameworks and
 # additional Unix paths (FreeBSD, etc).
-
-#=============================================================================
-# Copyright 2005-2009 Kitware, Inc.
-# Copyright 2012 Benjamin Eikel
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 if(NOT SDL_NET_INCLUDE_DIR AND SDLNET_INCLUDE_DIR)
   set(SDL_NET_INCLUDE_DIR ${SDLNET_INCLUDE_DIR} CACHE PATH "directory cache
@@ -102,7 +91,7 @@ FIND_PACKAGE_HANDLE_STANDARD_ARGS(SDL_net
                                   REQUIRED_VARS SDL_NET_LIBRARIES SDL_NET_INCLUDE_DIRS
                                   VERSION_VAR SDL_NET_VERSION_STRING)
 
-# for backward compatiblity
+# for backward compatibility
 set(SDLNET_LIBRARY ${SDL_NET_LIBRARIES})
 set(SDLNET_INCLUDE_DIR ${SDL_NET_INCLUDE_DIRS})
 set(SDLNET_FOUND ${SDL_NET_FOUND})

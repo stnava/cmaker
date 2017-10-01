@@ -1,19 +1,20 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # CheckFunctionExists
 # -------------------
 #
-# Check if a C function can be linked
+# Check if a C function can be linked::
 #
-# CHECK_FUNCTION_EXISTS(<function> <variable>)
+#   check_function_exists(<function> <variable>)
 #
-# Check that the <function> is provided by libraries on the system and
-# store the result in a <variable>.  This does not verify that any
-# system header file declares the function, only that it can be found at
-# link time (consider using CheckSymbolExists).
-# <variable> will be created as an internal cache variable.
+# Check that the ``<function>`` is provided by libraries on the system and store
+# the result in a ``<variable>``. ``<variable>`` will be created as an internal
+# cache variable.
 #
-# The following variables may be set before calling this macro to modify
-# the way the check is run:
+# The following variables may be set before calling this macro to modify the
+# way the check is run:
 #
 # ::
 #
@@ -22,21 +23,20 @@
 #   CMAKE_REQUIRED_INCLUDES = list of include directories
 #   CMAKE_REQUIRED_LIBRARIES = list of libraries to link
 #   CMAKE_REQUIRED_QUIET = execute quietly without messages
-
-#=============================================================================
-# Copyright 2002-2011 Kitware, Inc.
 #
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
+# .. note::
 #
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
-
+#   Prefer using :Module:`CheckSymbolExists` instead of this module,
+#   for the following reasons:
+#
+#   * ``check_function_exists()`` can't detect functions that are inlined
+#     in headers or specified as a macro.
+#
+#   * ``check_function_exists()`` can't detect anything in the 32-bit
+#     versions of the Win32 API, because of a mismatch in calling conventions.
+#
+#   * ``check_function_exists()`` only verifies linking, it does not verify
+#     that the function is declared in system headers.
 
 macro(CHECK_FUNCTION_EXISTS FUNCTION VARIABLE)
   if(NOT DEFINED "${VARIABLE}" OR "x${${VARIABLE}}" STREQUAL "x${VARIABLE}")
@@ -57,14 +57,26 @@ macro(CHECK_FUNCTION_EXISTS FUNCTION VARIABLE)
     else()
       set(CHECK_FUNCTION_EXISTS_ADD_INCLUDES)
     endif()
+
+    if(CMAKE_C_COMPILER_LOADED)
+      set(_cfe_source ${CMAKE_ROOT}/Modules/CheckFunctionExists.c)
+    elseif(CMAKE_CXX_COMPILER_LOADED)
+      set(_cfe_source ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CheckFunctionExists/CheckFunctionExists.cxx)
+      configure_file(${CMAKE_ROOT}/Modules/CheckFunctionExists.c "${_cfe_source}" COPYONLY)
+    else()
+      message(FATAL_ERROR "CHECK_FUNCTION_EXISTS needs either C or CXX language enabled")
+    endif()
+
     try_compile(${VARIABLE}
       ${CMAKE_BINARY_DIR}
-      ${CMAKE_ROOT}/Modules/CheckFunctionExists.c
+      ${_cfe_source}
       COMPILE_DEFINITIONS ${CMAKE_REQUIRED_DEFINITIONS}
       ${CHECK_FUNCTION_EXISTS_ADD_LIBRARIES}
       CMAKE_FLAGS -DCOMPILE_DEFINITIONS:STRING=${MACRO_CHECK_FUNCTION_DEFINITIONS}
       "${CHECK_FUNCTION_EXISTS_ADD_INCLUDES}"
       OUTPUT_VARIABLE OUTPUT)
+    unset(_cfe_source)
+
     if(${VARIABLE})
       set(${VARIABLE} 1 CACHE INTERNAL "Have function ${FUNCTION}")
       if(NOT CMAKE_REQUIRED_QUIET)

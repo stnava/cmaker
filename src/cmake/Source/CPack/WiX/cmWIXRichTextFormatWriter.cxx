@@ -1,22 +1,12 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2012 Kitware, Inc.
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmWIXRichTextFormatWriter.h"
 
-#include <cmVersion.h>
+#include "cmVersion.h"
 
 cmWIXRichTextFormatWriter::cmWIXRichTextFormatWriter(
-  std::string const& filename):
-    File(filename.c_str(), std::ios::binary)
+  std::string const& filename)
+  : File(filename.c_str(), std::ios::binary)
 {
   StartGroup();
   WriteHeader();
@@ -37,74 +27,50 @@ void cmWIXRichTextFormatWriter::AddText(std::string const& text)
 {
   typedef unsigned char rtf_byte_t;
 
-  for(size_t i = 0; i < text.size(); ++i)
-    {
+  for (size_t i = 0; i < text.size(); ++i) {
     rtf_byte_t c = rtf_byte_t(text[i]);
 
-    switch(c)
-      {
-    case '\\':
-      File << "\\\\";
-      break;
-    case '{':
-      File << "\\{";
-      break;
-    case '}':
-      File << "\\}";
-      break;
-    case '\n':
-      File << "\\par\r\n";
-      break;
-    case '\r':
-      continue;
-    default:
-        {
-        if(c <= 0x7F)
-          {
+    switch (c) {
+      case '\\':
+        File << "\\\\";
+        break;
+      case '{':
+        File << "\\{";
+        break;
+      case '}':
+        File << "\\}";
+        break;
+      case '\n':
+        File << "\\par\r\n";
+        break;
+      case '\r':
+        continue;
+      default: {
+        if (c <= 0x7F) {
           File << c;
-          }
-        else
-          {
-            if(c <= 0xC0)
-              {
-              EmitInvalidCodepoint(c);
-              }
-            else if(c < 0xE0 && i+1 < text.size())
-              {
-              EmitUnicodeCodepoint(
-                (text[i+1] & 0x3F) |
-                ((c & 0x1F) << 6)
-              );
-              i+= 1;
-              }
-            else if(c < 0xF0 && i+2 < text.size())
-              {
-              EmitUnicodeCodepoint(
-                (text[i+2] & 0x3F) |
-                ((text[i+1] & 0x3F) << 6) |
-                ((c & 0xF) << 12)
-              );
-              i += 2;
-              }
-            else if(c < 0xF8 && i+3 < text.size())
-              {
-              EmitUnicodeCodepoint(
-                (text[i+3] & 0x3F) |
-                ((text[i+2] & 0x3F) << 6) |
-                ((text[i+1] & 0x3F) << 12) |
-                ((c & 0x7) << 18)
-              );
-              i += 3;
-              }
-            else
-              {
-              EmitInvalidCodepoint(c);
-              }
+        } else {
+          if (c <= 0xC0) {
+            EmitInvalidCodepoint(c);
+          } else if (c < 0xE0 && i + 1 < text.size()) {
+            EmitUnicodeCodepoint((text[i + 1] & 0x3F) | ((c & 0x1F) << 6));
+            i += 1;
+          } else if (c < 0xF0 && i + 2 < text.size()) {
+            EmitUnicodeCodepoint((text[i + 2] & 0x3F) |
+                                 ((text[i + 1] & 0x3F) << 6) |
+                                 ((c & 0xF) << 12));
+            i += 2;
+          } else if (c < 0xF8 && i + 3 < text.size()) {
+            EmitUnicodeCodepoint(
+              (text[i + 3] & 0x3F) | ((text[i + 2] & 0x3F) << 6) |
+              ((text[i + 1] & 0x3F) << 12) | ((c & 0x7) << 18));
+            i += 3;
+          } else {
+            EmitInvalidCodepoint(c);
           }
         }
-      break;
-      }
+      } break;
     }
+  }
 }
 
 void cmWIXRichTextFormatWriter::WriteHeader()
@@ -190,33 +156,25 @@ void cmWIXRichTextFormatWriter::EndGroup()
 void cmWIXRichTextFormatWriter::EmitUnicodeCodepoint(int c)
 {
   // Do not emit byte order mark (BOM)
-  if(c == 0xFEFF)
-    {
+  if (c == 0xFEFF) {
     return;
-    }
-  else if(c <= 0xFFFF)
-    {
+  } else if (c <= 0xFFFF) {
     EmitUnicodeSurrogate(c);
-    }
-  else
-    {
+  } else {
     c -= 0x10000;
     EmitUnicodeSurrogate(((c >> 10) & 0x3FF) + 0xD800);
     EmitUnicodeSurrogate((c & 0x3FF) + 0xDC00);
-    }
+  }
 }
 
 void cmWIXRichTextFormatWriter::EmitUnicodeSurrogate(int c)
 {
   ControlWord("u");
-  if(c <= 32767)
-    {
+  if (c <= 32767) {
     File << c;
-    }
-  else
-    {
+  } else {
     File << (c - 65536);
-    }
+  }
   File << "?";
 }
 

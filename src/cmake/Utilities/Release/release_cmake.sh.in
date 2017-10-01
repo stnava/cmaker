@@ -5,6 +5,7 @@ echo ""
 echo  "remove and create working directory @CMAKE_RELEASE_DIRECTORY@"
 rm -rf @CMAKE_RELEASE_DIRECTORY@
 mkdir @CMAKE_RELEASE_DIRECTORY@
+@ENV@
 
 check_exit_value()
 {
@@ -93,13 +94,15 @@ cd @CMAKE_RELEASE_DIRECTORY@
 if [ ! -z "@GIT_COMMAND@" ]; then
    # clone the repo without creating any source files in the directory
    # matching the branch being built (i.e. master CMake-2-8, etc)
-   @GIT_COMMAND@ clone -n git://cmake.org/cmake.git @CMAKE_CREATE_VERSION@
-   check_exit_value $? "Checkout git cmake source" || exit 1
+   @GIT_COMMAND@ clone -n https://gitlab.kitware.com/cmake/cmake.git @CMAKE_CREATE_VERSION@
+   check_exit_value $? "git clone cmake source" || exit 1
    # go into the git directory
    cd @CMAKE_CREATE_VERSION@
    # run any extra commands if they exist
    @GIT_EXTRA@
    check_exit_value $? "git extra cmake source" || exit 1
+   @GIT_FETCH@
+   check_exit_value $? "git extra fetch" || exit 1
    # now checkout a copy on the local branch working
    @GIT_COMMAND@ checkout -b working @GIT_BRANCH@
    check_exit_value $? "git checkout" || exit 1
@@ -116,15 +119,9 @@ if [ ! -z "@CONFIGURE_WITH_CMAKE@" ]; then
     @CMAKE_CONFIGURE_PATH@ ../@CMAKE_CREATE_VERSION@
     check_exit_value $? "Configure cmake" || exit 1
 else
-    if [ -z "@INSTALL_PREFIX@" ]; then
-	echo  "Run cmake bootstrap --parallel=@PROCESSORS@"
-	../@CMAKE_CREATE_VERSION@/bootstrap --parallel=@PROCESSORS@
-	check_exit_value $? "Bootstrap cmake" || exit 1
-    else
-	echo  "Run cmake bootstrap --prefix=@INSTALL_PREFIX@ --parallel=@PROCESSORS@"
-	../@CMAKE_CREATE_VERSION@/bootstrap --prefix=@INSTALL_PREFIX@ --parallel=@PROCESSORS@
-	check_exit_value $? "Bootstrap cmake" || exit 1
-    fi
+    echo  "Run cmake bootstrap @BOOTSTRAP_ARGS@ --parallel=@PROCESSORS@"
+    ../@CMAKE_CREATE_VERSION@/bootstrap @BOOTSTRAP_ARGS@ --parallel=@PROCESSORS@
+    check_exit_value $? "Bootstrap cmake" || exit 1
 fi
 
 echo "Build cmake with @MAKE@"

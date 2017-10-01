@@ -1,13 +1,5 @@
-#=============================================================================
-# Copyright 2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
 configure_file(${FortranCInterface_SOURCE_DIR}/Input.cmake.in
                ${FortranCInterface_BINARY_DIR}/Input.cmake @ONLY)
@@ -35,13 +27,17 @@ unset(FortranCInterface_VERIFIED_CXX CACHE)
 set(_result)
 
 # Build a sample project which reports symbols.
+set(CMAKE_TRY_COMPILE_CONFIGURATION Release)
 try_compile(FortranCInterface_COMPILED
   ${FortranCInterface_BINARY_DIR}
   ${FortranCInterface_SOURCE_DIR}
-  FortranCInterface
+  FortranCInterface # project name
+  FortranCInterface # target name
   CMAKE_FLAGS
     "-DCMAKE_C_FLAGS:STRING=${CMAKE_C_FLAGS}"
     "-DCMAKE_Fortran_FLAGS:STRING=${CMAKE_Fortran_FLAGS}"
+    "-DCMAKE_C_FLAGS_RELEASE:STRING=${CMAKE_C_FLAGS_RELEASE}"
+    "-DCMAKE_Fortran_FLAGS_RELEASE:STRING=${CMAKE_Fortran_FLAGS_RELEASE}"
   OUTPUT_VARIABLE FortranCInterface_OUTPUT)
 set(FortranCInterface_COMPILED ${FortranCInterface_COMPILED})
 unset(FortranCInterface_COMPILED CACHE)
@@ -50,7 +46,7 @@ unset(FortranCInterface_COMPILED CACHE)
 if(FortranCInterface_COMPILED)
   find_program(FortranCInterface_EXE
     NAMES FortranCInterface${CMAKE_EXECUTABLE_SUFFIX}
-    PATHS ${FortranCInterface_BINARY_DIR} ${FortranCInterface_BINARY_DIR}/Debug
+    PATHS ${FortranCInterface_BINARY_DIR} ${FortranCInterface_BINARY_DIR}/Release
     NO_DEFAULT_PATH
     )
   set(FortranCInterface_EXE ${FortranCInterface_EXE})

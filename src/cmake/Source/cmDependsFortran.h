@@ -1,27 +1,28 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
+#ifndef cmFortran_h
+#define cmFortran_h
 
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
+#include "cmConfigure.h"
 
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-#ifndef cmDependsFortran_h
-#define cmDependsFortran_h
+#include <iosfwd>
+#include <set>
+#include <string>
+#include <vector>
 
 #include "cmDepends.h"
 
 class cmDependsFortranInternals;
-class cmDependsFortranSourceInfo;
+class cmFortranSourceInfo;
+class cmLocalGenerator;
 
 /** \class cmDependsFortran
  * \brief Dependency scanner for Fortran object files.
  */
-class cmDependsFortran: public cmDepends
+class cmDependsFortran : public cmDepends
 {
+  CM_DISABLE_COPY(cmDependsFortran)
+
 public:
   /** Checking instances need to know the build directory name and the
       relative path from the build directory to the target file.  */
@@ -34,7 +35,7 @@ public:
   cmDependsFortran(cmLocalGenerator* lg);
 
   /** Virtual destructor to cleanup subclasses properly.  */
-  virtual ~cmDependsFortran();
+  ~cmDependsFortran() CM_OVERRIDE;
 
   /** Callback from build system after a .mod file has been generated
       by a Fortran90 compiler to copy the .mod file to the
@@ -43,19 +44,13 @@ public:
 
   /** Determine if a mod file and the corresponding mod.stamp file
       are representing  different module information. */
-  static bool  ModulesDiffer(const char* modFile, const char* stampFile,
-                             const char* compilerId);
-
-  /** Method to find an included file in the include path.  Fortran
-      always searches the directory containing the including source
-      first.  */
-  bool FindIncludeFile(const char* dir, const char* includeName,
-                       std::string& fileName);
+  static bool ModulesDiffer(const char* modFile, const char* stampFile,
+                            const char* compilerId);
 
 protected:
   // Finalize the dependency information for the target.
-  virtual bool Finalize(std::ostream& makeDepends,
-                        std::ostream& internalDepends);
+  bool Finalize(std::ostream& makeDepends,
+                std::ostream& internalDepends) CM_OVERRIDE;
 
   // Find all the modules required by the target.
   void LocateModules();
@@ -65,28 +60,27 @@ protected:
   bool FindModule(std::string const& name, std::string& module);
 
   // Implement writing/checking methods required by superclass.
-  virtual bool WriteDependencies(
-    const std::set<std::string>& sources, const std::string& file,
-    std::ostream& makeDepends, std::ostream& internalDepends);
+  bool WriteDependencies(const std::set<std::string>& sources,
+                         const std::string& file, std::ostream& makeDepends,
+                         std::ostream& internalDepends) CM_OVERRIDE;
 
   // Actually write the depenencies to the streams.
-  bool WriteDependenciesReal(const char *obj,
-                             cmDependsFortranSourceInfo const& info,
-                             const char* mod_dir, const char* stamp_dir,
+  bool WriteDependenciesReal(const char* obj, cmFortranSourceInfo const& info,
+                             std::string const& mod_dir, const char* stamp_dir,
                              std::ostream& makeDepends,
                              std::ostream& internalDepends);
 
   // The source file from which to start scanning.
   std::string SourceFile;
 
-  std::vector<std::string> PPDefinitions;
+  std::set<std::string> PPDefinitions;
 
   // Internal implementation details.
   cmDependsFortranInternals* Internal;
 
 private:
-  cmDependsFortran(cmDependsFortran const&); // Purposely not implemented.
-  void operator=(cmDependsFortran const&); // Purposely not implemented.
+  std::string MaybeConvertToRelativePath(std::string const& base,
+                                         std::string const& path);
 };
 
 #endif

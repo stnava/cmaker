@@ -1,18 +1,13 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmPropertyDefinition_h
 #define cmPropertyDefinition_h
 
+#include "cmConfigure.h" // IWYU pragma: keep
+
 #include "cmProperty.h"
+
+#include <string>
 
 /** \class cmPropertyDefinition
  * \brief Property meta-information
@@ -28,9 +23,8 @@ class cmPropertyDefinition
 public:
   /// Define this property
   void DefineProperty(const std::string& name, cmProperty::ScopeType scope,
-                      const char *ShortDescription,
-                      const char *FullDescription,
-                      bool chained);
+                      const char* ShortDescription,
+                      const char* FullDescription, bool chained);
 
   /// Default constructor
   cmPropertyDefinition() { this->Chained = false; }
@@ -39,16 +33,19 @@ public:
   bool IsChained() const { return this->Chained; }
 
   /// Get the scope
-  cmProperty::ScopeType GetScope() const {
-    return this->Scope; }
+  cmProperty::ScopeType GetScope() const { return this->Scope; }
 
   /// Get the documentation (short version)
-  const std::string &GetShortDescription() const {
-    return this->ShortDescription; }
+  const std::string& GetShortDescription() const
+  {
+    return this->ShortDescription;
+  }
 
   /// Get the documentation (full version)
-  const std::string &GetFullDescription() const {
-    return this->FullDescription; }
+  const std::string& GetFullDescription() const
+  {
+    return this->FullDescription;
+  }
 
 protected:
   std::string Name;

@@ -1,16 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # This file is included in CMakeSystemSpecificInformation.cmake if
 # the Eclipse CDT4 extra generator has been selected.
@@ -30,10 +20,12 @@ function(_FIND_ECLIPSE_VERSION)
   set(_ECLIPSE_VERSION_NAME_3.7 "Indigo" )
   set(_ECLIPSE_VERSION_NAME_4.2 "Juno" )
   set(_ECLIPSE_VERSION_NAME_4.3 "Kepler" )
+  set(_ECLIPSE_VERSION_NAME_4.4 "Luna" )
+  set(_ECLIPSE_VERSION_NAME_4.5 "Mars" )
 
   if(NOT DEFINED CMAKE_ECLIPSE_VERSION)
     if(CMAKE_ECLIPSE_EXECUTABLE)
-      # use REALPATH to resolve symlinks (http://public.kitware.com/Bug/view.php?id=13036)
+      # use REALPATH to resolve symlinks (https://gitlab.kitware.com/cmake/cmake/issues/13036)
       get_filename_component(_REALPATH_CMAKE_ECLIPSE_EXECUTABLE "${CMAKE_ECLIPSE_EXECUTABLE}" REALPATH)
       get_filename_component(_ECLIPSE_DIR "${_REALPATH_CMAKE_ECLIPSE_EXECUTABLE}" PATH)
       file(GLOB _ECLIPSE_FEATURE_DIR "${_ECLIPSE_DIR}/features/org.eclipse.platform*")
@@ -65,6 +57,8 @@ function(_FIND_ECLIPSE_VERSION)
                                                             "3.7 (${_ECLIPSE_VERSION_NAME_3.7})"
                                                             "4.2 (${_ECLIPSE_VERSION_NAME_4.2})"
                                                             "4.3 (${_ECLIPSE_VERSION_NAME_4.3})"
+                                                            "4.4 (${_ECLIPSE_VERSION_NAME_4.4})"
+                                                            "4.5 (${_ECLIPSE_VERSION_NAME_4.5})"
               )
 endfunction()
 

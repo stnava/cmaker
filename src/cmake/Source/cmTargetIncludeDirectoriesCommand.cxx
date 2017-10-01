@@ -1,98 +1,99 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2013 Stephen Kelly <steveire@gmail.com>
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #include "cmTargetIncludeDirectoriesCommand.h"
 
-#include "cmGeneratorExpression.h"
+#include <set>
+#include <sstream>
 
-//----------------------------------------------------------------------------
-bool cmTargetIncludeDirectoriesCommand
-::InitialPass(std::vector<std::string> const& args, cmExecutionStatus &)
+#include "cmGeneratorExpression.h"
+#include "cmListFileCache.h"
+#include "cmMakefile.h"
+#include "cmSystemTools.h"
+#include "cmTarget.h"
+#include "cmake.h"
+
+class cmExecutionStatus;
+
+bool cmTargetIncludeDirectoriesCommand::InitialPass(
+  std::vector<std::string> const& args, cmExecutionStatus&)
 {
   return this->HandleArguments(args, "INCLUDE_DIRECTORIES",
                                ArgumentFlags(PROCESS_BEFORE | PROCESS_SYSTEM));
 }
 
-//----------------------------------------------------------------------------
-void cmTargetIncludeDirectoriesCommand
-::HandleImportedTarget(const std::string &tgt)
+void cmTargetIncludeDirectoriesCommand::HandleImportedTarget(
+  const std::string& tgt)
 {
   std::ostringstream e;
-  e << "Cannot specify include directories for imported target \""
-    << tgt << "\".";
+  e << "Cannot specify include directories for imported target \"" << tgt
+    << "\".";
   this->Makefile->IssueMessage(cmake::FATAL_ERROR, e.str());
 }
 
-//----------------------------------------------------------------------------
-void cmTargetIncludeDirectoriesCommand
-::HandleMissingTarget(const std::string &name)
+void cmTargetIncludeDirectoriesCommand::HandleMissingTarget(
+  const std::string& name)
 {
   std::ostringstream e;
-  e << "Cannot specify include directories for target \"" << name << "\" "
+  e << "Cannot specify include directories for target \"" << name
+    << "\" "
        "which is not built by this project.";
   this->Makefile->IssueMessage(cmake::FATAL_ERROR, e.str());
 }
 
-//----------------------------------------------------------------------------
-std::string cmTargetIncludeDirectoriesCommand
-::Join(const std::vector<std::string> &content)
+std::string cmTargetIncludeDirectoriesCommand::Join(
+  const std::vector<std::string>& content)
 {
   std::string dirs;
   std::string sep;
-  std::string prefix = this->Makefile->GetStartDirectory() + std::string("/");
-  for(std::vector<std::string>::const_iterator it = content.begin();
-    it != content.end(); ++it)
-    {
-    if (cmSystemTools::FileIsFullPath(it->c_str())
-        || cmGeneratorExpression::Find(*it) == 0)
-      {
+  std::string prefix =
+    this->Makefile->GetCurrentSourceDirectory() + std::string("/");
+  for (std::vector<std::string>::const_iterator it = content.begin();
+       it != content.end(); ++it) {
+    if (cmSystemTools::FileIsFullPath(it->c_str()) ||
+        cmGeneratorExpression::Find(*it) == 0) {
       dirs += sep + *it;
-      }
-    else
-      {
+    } else {
       dirs += sep + prefix + *it;
-      }
-    sep = ";";
     }
+    sep = ";";
+  }
   return dirs;
 }
 
-//----------------------------------------------------------------------------
-bool cmTargetIncludeDirectoriesCommand
-::HandleDirectContent(cmTarget *tgt, const std::vector<std::string> &content,
-                      bool prepend, bool system)
+bool cmTargetIncludeDirectoriesCommand::HandleDirectContent(
+  cmTarget* tgt, const std::vector<std::string>& content, bool prepend,
+  bool system)
 {
   cmListFileBacktrace lfbt = this->Makefile->GetBacktrace();
-  cmValueWithOrigin entry(this->Join(content), lfbt);
-  tgt->InsertInclude(entry, prepend);
-  if (system)
-    {
-    tgt->AddSystemIncludeDirectories(content);
+  tgt->InsertInclude(this->Join(content), lfbt, prepend);
+  if (system) {
+    std::string prefix =
+      this->Makefile->GetCurrentSourceDirectory() + std::string("/");
+    std::set<std::string> sdirs;
+    for (std::vector<std::string>::const_iterator it = content.begin();
+         it != content.end(); ++it) {
+      if (cmSystemTools::FileIsFullPath(it->c_str()) ||
+          cmGeneratorExpression::Find(*it) == 0) {
+        sdirs.insert(*it);
+      } else {
+        sdirs.insert(prefix + *it);
+      }
     }
+    tgt->AddSystemIncludeDirectories(sdirs);
+  }
   return true;
 }
 
-//----------------------------------------------------------------------------
-void cmTargetIncludeDirectoriesCommand
-::HandleInterfaceContent(cmTarget *tgt,
-                         const std::vector<std::string> &content,
-                         bool prepend, bool system)
+void cmTargetIncludeDirectoriesCommand::HandleInterfaceContent(
+  cmTarget* tgt, const std::vector<std::string>& content, bool prepend,
+  bool system)
 {
-  cmTargetPropCommandBase::HandleInterfaceContent(tgt, content,
-                                                  prepend, system);
+  cmTargetPropCommandBase::HandleInterfaceContent(tgt, content, prepend,
+                                                  system);
 
-  if (system)
-    {
-    std::string joined = cmJoin(content, ";");
+  if (system) {
+    std::string joined = this->Join(content);
     tgt->AppendProperty("INTERFACE_SYSTEM_INCLUDE_DIRECTORIES",
                         joined.c_str());
-    }
+  }
 }

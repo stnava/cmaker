@@ -1,3 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # FindThreads
 # -----------
@@ -26,7 +29,7 @@
 #
 #   CMAKE_THREAD_PREFER_PTHREAD
 #
-# If the use of the -pthread compiler and linker flag is prefered then the
+# If the use of the -pthread compiler and linker flag is preferred then the
 # caller can set
 #
 # ::
@@ -37,29 +40,23 @@
 # target. Use of both the imported target as well as this switch is highly
 # recommended for new code.
 
-#=============================================================================
-# Copyright 2002-2009 Kitware, Inc.
-# Copyright 2011-2014 Rolf Eike Beer <eike@sf-mail.de>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
-include (CheckIncludeFiles)
 include (CheckLibraryExists)
 include (CheckSymbolExists)
 set(Threads_FOUND FALSE)
 set(CMAKE_REQUIRED_QUIET_SAVE ${CMAKE_REQUIRED_QUIET})
 set(CMAKE_REQUIRED_QUIET ${Threads_FIND_QUIETLY})
 
+if(CMAKE_C_COMPILER_LOADED)
+  include (CheckIncludeFile)
+elseif(CMAKE_CXX_COMPILER_LOADED)
+  include (CheckIncludeFileCXX)
+else()
+  message(FATAL_ERROR "FindThreads only works if either C or CXX language is enabled")
+endif()
+
 # Do we have sproc?
 if(CMAKE_SYSTEM_NAME MATCHES IRIX AND NOT CMAKE_THREAD_PREFER_PTHREAD)
+  include (CheckIncludeFiles)
   CHECK_INCLUDE_FILES("sys/types.h;sys/prctl.h"  CMAKE_HAVE_SPROC_H)
 endif()
 
@@ -83,11 +80,18 @@ macro(_check_pthreads_flag)
     # If we did not found -lpthread, -lpthread, or -lthread, look for -pthread
     if(NOT DEFINED THREADS_HAVE_PTHREAD_ARG)
       message(STATUS "Check if compiler accepts -pthread")
+      if(CMAKE_C_COMPILER_LOADED)
+        set(_threads_src ${CMAKE_CURRENT_LIST_DIR}/CheckForPthreads.c)
+      elseif(CMAKE_CXX_COMPILER_LOADED)
+        set(_threads_src ${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/FindThreads/CheckForPthreads.cxx)
+        configure_file(${CMAKE_CURRENT_LIST_DIR}/CheckForPthreads.c "${_threads_src}" COPYONLY)
+      endif()
       try_run(THREADS_PTHREAD_ARG THREADS_HAVE_PTHREAD_ARG
         ${CMAKE_BINARY_DIR}
-        ${CMAKE_CURRENT_LIST_DIR}/CheckForPthreads.c
+        ${_threads_src}
         CMAKE_FLAGS -DLINK_LIBRARIES:STRING=-pthread
         COMPILE_OUTPUT_VARIABLE OUTPUT)
+      unset(_threads_src)
 
       if(THREADS_HAVE_PTHREAD_ARG)
         if(THREADS_PTHREAD_ARG STREQUAL "2")
@@ -120,7 +124,11 @@ if(CMAKE_HAVE_SPROC_H AND NOT CMAKE_THREAD_PREFER_PTHREAD)
   set(CMAKE_USE_SPROC_INIT 1)
 else()
   # Do we have pthreads?
-  CHECK_INCLUDE_FILES("pthread.h" CMAKE_HAVE_PTHREAD_H)
+  if(CMAKE_C_COMPILER_LOADED)
+    CHECK_INCLUDE_FILE("pthread.h" CMAKE_HAVE_PTHREAD_H)
+  else()
+    CHECK_INCLUDE_FILE_CXX("pthread.h" CMAKE_HAVE_PTHREAD_H)
+  endif()
   if(CMAKE_HAVE_PTHREAD_H)
 
     #

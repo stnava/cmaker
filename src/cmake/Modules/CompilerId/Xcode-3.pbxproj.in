@@ -58,7 +58,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "echo \"GCC_VERSION=$GCC_VERSION\"";
+			shellScript = "echo \"GCC_VERSION=$GCC_VERSION\" ; echo \"CURRENT_ARCH=$CURRENT_ARCH\"";
 			showEnvVarsInLog = 0;
 		};
 		2C18F0B515DC1DCE00593670 = {
@@ -79,12 +79,12 @@
 		1DEB928A08733DD80010E9CD = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
 				ONLY_ACTIVE_ARCH = YES;
 				CODE_SIGNING_REQUIRED = NO;
 				CONFIGURATION_BUILD_DIR = "$(BUILD_DIR)";
 				SYMROOT = .;
 				@id_toolset@
+				@id_lang_version@
 				@id_deployment_target@
 				@id_sdkroot@
 			};

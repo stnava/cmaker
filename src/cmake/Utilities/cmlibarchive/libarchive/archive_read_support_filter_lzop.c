@@ -242,10 +242,17 @@ consume_header(struct archive_read_filter *self)
 
 	if (version >= 0x940) {
 		unsigned level = *p++;
+#if 0
 		unsigned default_level[] = {0, 3, 1, 9};
+#endif
 		if (level == 0)
 			/* Method is 1..3 here due to check above. */
+#if 0	/* Avoid an error Clang Static Analyzer claims
+	  "Value stored to 'level' is never read". */
 			level = default_level[method];
+#else
+			;/* NOP */
+#endif
 		else if (level > 9) {
 			archive_set_error(&self->archive->archive,
 			    ARCHIVE_ERRNO_MISC, "Invalid level");
@@ -429,7 +436,7 @@ lzop_filter_read(struct archive_read_filter *self, const void **p)
 	}
 
 	/*
-	 * Drive lzo uncompresison.
+	 * Drive lzo uncompression.
 	 */
 	out_size = (lzo_uint)state->uncompressed_size;
 	r = lzo1x_decompress_safe(b, (lzo_uint)state->compressed_size,

@@ -1,16 +1,6 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
 
-#=============================================================================
-# Copyright 2002-2009 Kitware, Inc.
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 # This module is shared by multiple languages; use include blocker.
 if(__WINDOWS_GNU)
@@ -35,7 +25,7 @@ endif()
 
 if(MINGW)
   set(CMAKE_FIND_LIBRARY_PREFIXES "lib" "")
-  set(CMAKE_FIND_LIBRARY_SUFFIXES ".dll.a" ".a" ".lib")
+  set(CMAKE_FIND_LIBRARY_SUFFIXES ".dll" ".dll.a" ".a" ".lib")
   set(CMAKE_C_STANDARD_LIBRARIES_INIT "-lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32")
   set(CMAKE_CXX_STANDARD_LIBRARIES_INIT "${CMAKE_C_STANDARD_LIBRARIES_INIT}")
 endif()
@@ -65,7 +55,7 @@ macro(__windows_compiler_gnu lang)
 
   if(MSYS OR MINGW)
     # Create archiving rules to support large object file lists for static libraries.
-    set(CMAKE_${lang}_ARCHIVE_CREATE "<CMAKE_AR> cq <TARGET> <LINK_FLAGS> <OBJECTS>")
+    set(CMAKE_${lang}_ARCHIVE_CREATE "<CMAKE_AR> qc <TARGET> <LINK_FLAGS> <OBJECTS>")
     set(CMAKE_${lang}_ARCHIVE_APPEND "<CMAKE_AR> q  <TARGET> <LINK_FLAGS> <OBJECTS>")
     set(CMAKE_${lang}_ARCHIVE_FINISH "<CMAKE_RANLIB> <TARGET>")
 
@@ -138,6 +128,10 @@ macro(__windows_compiler_gnu lang)
     endforeach()
   endif()
 
+  if(NOT CMAKE_RC_COMPILER_INIT AND NOT CMAKE_GENERATOR_RC)
+    set(CMAKE_RC_COMPILER_INIT windres)
+  endif()
+
   enable_language(RC)
 endmacro()
 
@@ -150,10 +144,24 @@ macro(__windows_compiler_gnu_abi lang)
 
   if(CMAKE_GNUtoMS AND NOT CMAKE_GNUtoMS_LIB)
     # Find MS development environment setup script for this architecture.
+    # We need to use the MS Librarian tool (lib.exe).
+    # Find the most recent version available.
+
+    # Query the VS Installer tool for locations of VS 2017 and above.
+    set(_vs_installer_paths "")
+    foreach(vs RANGE 15 15 -1) # change the first number to the largest supported version
+      cmake_host_system_information(RESULT _vs_dir QUERY VS_${vs}_DIR)
+      if(_vs_dir)
+        list(APPEND _vs_installer_paths "${_vs_dir}/VC/Auxiliary/Build")
+      endif()
+    endforeach(vs)
+
     if("${CMAKE_SIZEOF_VOID_P}" EQUAL 4)
       find_program(CMAKE_GNUtoMS_VCVARS NAMES vcvars32.bat
         DOC "Visual Studio vcvars32.bat"
         PATHS
+        ${_vs_installer_paths}
+        "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\Setup\\VC;ProductDir]/bin"
         "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\12.0\\Setup\\VC;ProductDir]/bin"
         "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\11.0\\Setup\\VC;ProductDir]/bin"
         "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\10.0\\Setup\\VC;ProductDir]/bin"
@@ -167,6 +175,8 @@ macro(__windows_compiler_gnu_abi lang)
       find_program(CMAKE_GNUtoMS_VCVARS NAMES vcvars64.bat vcvarsamd64.bat
         DOC "Visual Studio vcvarsamd64.bat"
         PATHS
+        ${_vs_installer_paths}
+        "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\Setup\\VC;ProductDir]/bin/amd64"
         "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\12.0\\Setup\\VC;ProductDir]/bin/amd64"
         "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\11.0\\Setup\\VC;ProductDir]/bin/amd64"
         "[HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\VisualStudio\\10.0\\Setup\\VC;ProductDir]/bin/amd64"
@@ -175,6 +185,7 @@ macro(__windows_compiler_gnu_abi lang)
         )
       set(CMAKE_GNUtoMS_ARCH amd64)
     endif()
+    unset(_vs_installer_paths)
     set_property(CACHE CMAKE_GNUtoMS_VCVARS PROPERTY ADVANCED 1)
     if(CMAKE_GNUtoMS_VCVARS)
       # Create helper script to run lib.exe from MS environment.

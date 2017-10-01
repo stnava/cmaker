@@ -1,22 +1,16 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmSourceGroup_h
 #define cmSourceGroup_h
 
-#include "cmStandardIncludes.h"
-#include <cmsys/RegularExpression.hxx>
+#include "cmConfigure.h"
+
+#include "cmsys/RegularExpression.hxx"
+#include <set>
+#include <string>
+#include <vector>
 
 class cmSourceFile;
-
 class cmSourceGroupInternals;
 
 /** \class cmSourceGroup
@@ -33,7 +27,7 @@ class cmSourceGroup
 {
 public:
   cmSourceGroup(const char* name, const char* regex,
-                const char* parentName=0);
+                const char* parentName = CM_NULLPTR);
   cmSourceGroup(cmSourceGroup const& r);
   ~cmSourceGroup();
   cmSourceGroup& operator=(cmSourceGroup const&);
@@ -51,12 +45,12 @@ public:
   /**
    * Add child to this sourcegroup
    */
-  void AddChild(cmSourceGroup child);
+  void AddChild(cmSourceGroup const& child);
 
   /**
    * Looks up child and returns it
    */
-  cmSourceGroup *LookupChild(const char *name) const;
+  cmSourceGroup* LookupChild(const char* name) const;
 
   /**
    * Get the name of this group.
@@ -82,12 +76,12 @@ public:
    * Check if the given name matches this group's explicit file list
    * in children.
    */
-  cmSourceGroup *MatchChildrenFiles(const char *name);
+  cmSourceGroup* MatchChildrenFiles(const char* name);
 
   /**
    * Check if the given name matches this group's regex in children.
    */
-  cmSourceGroup *MatchChildrenRegex(const char *name);
+  cmSourceGroup* MatchChildrenRegex(const char* name);
 
   /**
    * Assign the given source file to this group.  Used only by
@@ -102,6 +96,7 @@ public:
   const std::vector<const cmSourceFile*>& GetSourceFiles() const;
 
   std::vector<cmSourceGroup> const& GetGroupChildren() const;
+
 private:
   /**
    * The name of the source group.

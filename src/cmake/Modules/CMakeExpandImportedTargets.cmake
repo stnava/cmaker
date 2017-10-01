@@ -1,6 +1,22 @@
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 #.rst:
 # CMakeExpandImportedTargets
 # --------------------------
+#
+# Deprecated.  Do not use.
+#
+# This module was once needed to expand imported targets to the underlying
+# libraries they reference on disk for use with the :command:`try_compile`
+# and :command:`try_run` commands.  These commands now support imported
+# libraries in their ``LINK_LIBRARIES`` options (since CMake 2.8.11
+# for :command:`try_compile` and since CMake 3.2 for :command:`try_run`).
+#
+# This module does not support the policy :policy:`CMP0022` ``NEW``
+# behavior or use of the :prop_tgt:`INTERFACE_LINK_LIBRARIES` property
+# because :manual:`generator expressions <cmake-generator-expressions(7)>`
+# cannot be evaluated during configuration.
 #
 # ::
 #
@@ -14,32 +30,12 @@
 # respective configuration of the imported targets if it exists.  If no
 # CONFIGURATION is given, it uses the first configuration from
 # ${CMAKE_CONFIGURATION_TYPES} if set, otherwise ${CMAKE_BUILD_TYPE}.
-# This macro is used by all Check*.cmake files which use try_compile()
-# or try_run() and support CMAKE_REQUIRED_LIBRARIES , so that these
-# checks support imported targets in CMAKE_REQUIRED_LIBRARIES:
 #
 # ::
 #
 #     cmake_expand_imported_targets(expandedLibs
 #       LIBRARIES ${CMAKE_REQUIRED_LIBRARIES}
 #       CONFIGURATION "${CMAKE_TRY_COMPILE_CONFIGURATION}" )
-
-
-#=============================================================================
-# Copyright 2012 Kitware, Inc.
-# Copyright 2009-2012 Alexander Neundorf <neundorf@kde.org>
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distribute this file outside of CMake, substitute the full
-#  License text for the above reference.)
-
-include(${CMAKE_CURRENT_LIST_DIR}/CMakeParseArguments.cmake)
 
 function(CMAKE_EXPAND_IMPORTED_TARGETS _RESULT )
 

@@ -1,17 +1,9 @@
-#=============================================================================
-# CMake - Cross Platform Makefile Generator
-# Copyright 2000-2013 Kitware, Inc., Insight Software Consortium
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
+# Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+# file Copyright.txt or https://cmake.org/licensing for details.
+
 if(NOT CMake_SOURCE_DIR)
   set(CMakeHelp_STANDALONE 1)
-  cmake_minimum_required(VERSION 2.8.4 FATAL_ERROR)
+  cmake_minimum_required(VERSION 2.8.12.2 FATAL_ERROR)
   get_filename_component(tmp "${CMAKE_CURRENT_SOURCE_DIR}" PATH)
   get_filename_component(CMake_SOURCE_DIR "${tmp}" PATH)
   include(${CMake_SOURCE_DIR}/Modules/CTestUseLaunchers.cmake)
@@ -19,6 +11,9 @@ if(NOT CMake_SOURCE_DIR)
   include(${CMake_SOURCE_DIR}/Source/CMakeInstallDestinations.cmake)
   unset(CMAKE_DATA_DIR)
   unset(CMAKE_DATA_DIR CACHE)
+  macro(CMake_OPTIONAL_COMPONENT)
+    set(COMPONENT "")
+  endmacro()
 endif()
 project(CMakeHelp NONE)
 
@@ -31,8 +26,11 @@ find_program(SPHINX_EXECUTABLE
   NAMES sphinx-build
   DOC "Sphinx Documentation Builder (sphinx-doc.org)"
   )
+set(SPHINX_FLAGS "" CACHE STRING "Flags to pass to sphinx-build")
+separate_arguments(sphinx_flags UNIX_COMMAND "${SPHINX_FLAGS}")
 
 mark_as_advanced(SPHINX_TEXT)
+mark_as_advanced(SPHINX_FLAGS)
 
 if(NOT SPHINX_MAN AND NOT SPHINX_HTML AND NOT SPHINX_SINGLEHTML AND NOT SPHINX_QTHELP AND NOT SPHINX_TEXT)
   return()
@@ -114,6 +112,7 @@ foreach(format ${doc_formats})
             -c ${CMAKE_CURRENT_BINARY_DIR}
             -d ${CMAKE_CURRENT_BINARY_DIR}/doctrees
             -b ${format}
+            ${sphinx_flags}
             ${CMake_SOURCE_DIR}/Help
             ${CMAKE_CURRENT_BINARY_DIR}/${format}
             > ${doc_format_log} # log stdout, pass stderr
@@ -129,18 +128,20 @@ endforeach()
 
 add_custom_target(documentation ALL DEPENDS ${doc_format_outputs})
 
-foreach(t
-    cmake
-    ccmake
-    cmake-gui
-    cpack
-    ctest
-    )
-  if(TARGET ${t})
-    # Build documentation after main executables.
-    add_dependencies(documentation ${t})
-  endif()
-endforeach()
+if(CMake_SPHINX_DEPEND_ON_EXECUTABLES)
+  foreach(t
+      cmake
+      ccmake
+      cmake-gui
+      cpack
+      ctest
+      )
+    if(TARGET ${t})
+      # Build documentation after main executables.
+      add_dependencies(documentation ${t})
+    endif()
+  endforeach()
+endif()
 
 if(SPHINX_MAN)
   file(GLOB man_rst RELATIVE ${CMake_SOURCE_DIR}/Help/manual
@@ -149,30 +150,46 @@ if(SPHINX_MAN)
     if("x${m}" MATCHES "^x(.+)\\.([1-9])\\.rst$")
       set(name "${CMAKE_MATCH_1}")
       set(sec "${CMAKE_MATCH_2}")
-      install(FILES ${CMAKE_CURRENT_BINARY_DIR}/man/${name}.${sec}
-              DESTINATION ${CMAKE_MAN_DIR}/man${sec})
+      set(skip FALSE)
+      if(NOT CMakeHelp_STANDALONE)
+        if(name STREQUAL "ccmake" AND NOT BUILD_CursesDialog)
+          set(skip TRUE)
+        elseif(name STREQUAL "cmake-gui" AND NOT BUILD_QtDialog)
+          set(skip TRUE)
+        endif()
+      endif()
+      if(NOT skip)
+        CMake_OPTIONAL_COMPONENT(sphinx-man)
+        install(FILES ${CMAKE_CURRENT_BINARY_DIR}/man/${name}.${sec}
+                DESTINATION ${CMAKE_MAN_DIR}/man${sec}
+                ${COMPONENT})
+      endif()
+      unset(skip)
     endif()
   endforeach()
 endif()
 
 if(SPHINX_HTML)
+  CMake_OPTIONAL_COMPONENT(sphinx-html)
   install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/html
           DESTINATION ${CMAKE_DOC_DIR}
+          ${COMPONENT}
           PATTERN .buildinfo EXCLUDE
-          PATTERN objects.inv EXCLUDE
           )
 endif()
 
 if(SPHINX_SINGLEHTML)
+  CMake_OPTIONAL_COMPONENT(sphinx-singlehtml)
   install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/singlehtml
           DESTINATION ${CMAKE_DOC_DIR}
+          ${COMPONENT}
           PATTERN .buildinfo EXCLUDE
-          PATTERN objects.inv EXCLUDE
           )
 endif()
 
 if(SPHINX_QTHELP)
+  CMake_OPTIONAL_COMPONENT(sphinx-qthelp)
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/qthelp/CMake-${CMake_VERSION_MAJOR}${CMake_VERSION_MINOR}${CMake_VERSION_PATCH}.qch
-          DESTINATION ${CMAKE_DOC_DIR}
+          DESTINATION ${CMAKE_DOC_DIR} ${COMPONENT}
           )
 endif()

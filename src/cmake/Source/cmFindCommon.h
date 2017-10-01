@@ -1,20 +1,18 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmFindCommon_h
 #define cmFindCommon_h
 
+#include "cmConfigure.h"
+
+#include <map>
+#include <set>
+#include <string>
+#include <vector>
+
 #include "cmCommand.h"
-#include "cmSearchPath.h"
 #include "cmPathLabel.h"
+#include "cmSearchPath.h"
 
 /** \class cmFindCommon
  * \brief Base class for FIND_XXX implementations.
@@ -27,8 +25,7 @@ class cmFindCommon : public cmCommand
 {
 public:
   cmFindCommon();
-  ~cmFindCommon();
-  cmTypeMacro(cmFindCommon, cmCommand);
+  ~cmFindCommon() CM_OVERRIDE;
 
 protected:
   friend class cmSearchPath;
@@ -38,8 +35,12 @@ protected:
   {
   protected:
     PathGroup();
+
   public:
-    PathGroup(const std::string& label) : cmPathLabel(label) { }
+    PathGroup(const std::string& label)
+      : cmPathLabel(label)
+    {
+    }
     static PathGroup All;
   };
 
@@ -48,8 +49,13 @@ protected:
   {
   protected:
     PathLabel();
+
   public:
-    PathLabel(const std::string& label) : cmPathLabel(label) { }
+    PathLabel(const std::string& label)
+      : cmPathLabel(label)
+    {
+    }
+    static PathLabel PackageRoot;
     static PathLabel CMake;
     static PathLabel CMakeEnvironment;
     static PathLabel Hints;
@@ -58,9 +64,12 @@ protected:
     static PathLabel Guess;
   };
 
-  enum RootPathMode { RootPathModeNever,
-                      RootPathModeOnly,
-                      RootPathModeBoth };
+  enum RootPathMode
+  {
+    RootPathModeNever,
+    RootPathModeOnly,
+    RootPathModeBoth
+  };
 
   /** Construct the various path groups and labels */
   void InitializeSearchPathGroups();
@@ -72,13 +81,11 @@ protected:
   void GetIgnoredPaths(std::vector<std::string>& ignore);
   void GetIgnoredPaths(std::set<std::string>& ignore);
 
-  /** Remove paths in the ignore set from the supplied vector.  */
-  void FilterPaths(const std::vector<std::string>& inPaths,
-                   const std::set<std::string>& ignore,
-                   std::vector<std::string>& outPaths);
-
   /** Compute final search path list (reroot + trailing slash).  */
   void ComputeFinalPaths();
+
+  /** Decide whether to enable the PACKAGE_ROOT search entries.  */
+  void SelectDefaultNoPackageRootPath();
 
   /** Compute the current default root path mode.  */
   void SelectDefaultRootPathMode();
@@ -95,9 +102,9 @@ protected:
 
   bool CheckCommonArgument(std::string const& arg);
   void AddPathSuffix(std::string const& arg);
-  void SetMakefile(cmMakefile* makefile);
 
   bool NoDefaultPath;
+  bool NoPackageRootPath;
   bool NoCMakePath;
   bool NoCMakeEnvironmentPath;
   bool NoSystemEnvironmentPath;

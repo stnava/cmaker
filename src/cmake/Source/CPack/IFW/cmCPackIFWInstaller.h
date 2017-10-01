@@ -1,49 +1,40 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2000-2009 Kitware, Inc., Insight Software Consortium
-
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
 #ifndef cmCPackIFWInstaller_h
 #define cmCPackIFWInstaller_h
 
-#include <cmStandardIncludes.h>
+#include "cmConfigure.h" // IWYU pragma: keep
+
+#include "cmCPackIFWCommon.h"
+
+#include <map>
+#include <string>
+#include <vector>
 
 class cmCPackIFWPackage;
-class cmCPackIFWGenerator;
+class cmCPackIFWRepository;
 
 /** \class cmCPackIFWInstaller
  * \brief A binary installer to be created CPack IFW generator
  */
-class cmCPackIFWInstaller
+class cmCPackIFWInstaller : public cmCPackIFWCommon
 {
-public: // Types
+public:
+  // Types
 
   typedef std::map<std::string, cmCPackIFWPackage*> PackagesMap;
+  typedef std::vector<cmCPackIFWRepository*> RepositoriesVector;
 
-  struct RepositoryStruct
-  {
-    std::string Url;
-    std::string Enabled;
-    std::string Username;
-    std::string Password;
-    std::string DisplayName;
-  };
-
-public: // Constructor
+public:
+  // Constructor
 
   /**
    * Construct installer
    */
   cmCPackIFWInstaller();
 
-public: // Configuration
+public:
+  // Configuration
 
   /// Name of the product being installed
   std::string Name;
@@ -69,16 +60,56 @@ public: // Configuration
   /// Filename for a logo
   std::string Logo;
 
+  /// Filename for a watermark
+  std::string Watermark;
+
+  /// Filename for a banner
+  std::string Banner;
+
+  /// Filename for a background
+  std::string Background;
+
+  /// Wizard style name
+  std::string WizardStyle;
+
+  /// Wizard width
+  std::string WizardDefaultWidth;
+
+  /// Wizard height
+  std::string WizardDefaultHeight;
+
+  /// Title color
+  std::string TitleColor;
+
+  /// Name of the default program group in the Windows Start menu
+  std::string StartMenuDir;
+
   /// Default target directory for installation
   std::string TargetDir;
 
   /// Default target directory for installation with administrator rights
   std::string AdminTargetDir;
 
-public: // Internal implementation
+  /// Filename of the generated maintenance tool
+  std::string MaintenanceToolName;
 
-  const char* GetOption(const std::string& op) const;
-  bool IsOn(const std::string& op) const;
+  /// Filename for the configuration of the generated maintenance tool
+  std::string MaintenanceToolIniFile;
+
+  /// Set to true if the installation path can contain non-ASCII characters
+  std::string AllowNonAsciiCharacters;
+
+  /// Set to false if the installation path cannot contain space characters
+  std::string AllowSpaceInPath;
+
+  /// Filename for a custom installer control script
+  std::string ControlScript;
+
+  /// List of resources to include in the installer binary
+  std::vector<std::string> Resources;
+
+public:
+  // Internal implementation
 
   void ConfigureFromOptions();
 
@@ -86,10 +117,13 @@ public: // Internal implementation
 
   void GeneratePackageFiles();
 
-  cmCPackIFWGenerator* Generator;
   PackagesMap Packages;
-  std::vector<RepositoryStruct> Repositories;
+  RepositoriesVector RemoteRepositories;
   std::string Directory;
+
+protected:
+  void printSkippedOptionWarning(const std::string& optionName,
+                                 const std::string& optionValue);
 };
 
 #endif // cmCPackIFWInstaller_h

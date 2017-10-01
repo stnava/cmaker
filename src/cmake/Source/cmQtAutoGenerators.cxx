@@ -1,2382 +1,2066 @@
-/*============================================================================
-  CMake - Cross Platform Makefile Generator
-  Copyright 2004-2011 Kitware, Inc.
-  Copyright 2011 Alexander Neundorf (neundorf@kde.org)
+/* Distributed under the OSI-approved BSD 3-Clause License.  See accompanying
+   file Copyright.txt or https://cmake.org/licensing for details.  */
+#include "cmQtAutoGenerators.h"
+#include "cmQtAutoGeneratorCommon.h"
 
-  Distributed under the OSI-approved BSD License (the "License");
-  see accompanying file Copyright.txt for details.
-
-  This software is distributed WITHOUT ANY WARRANTY; without even the
-  implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-  See the License for more information.
-============================================================================*/
-
-#include "cmGlobalGenerator.h"
-#include "cmLocalGenerator.h"
-#include "cmMakefile.h"
-#include "cmSourceFile.h"
-#include "cmSystemTools.h"
-#include "cmAlgorithms.h"
-
-#if defined(_WIN32) && !defined(__CYGWIN__)
-# include "cmLocalVisualStudioGenerator.h"
-#endif
-
-#include <cmsys/Terminal.h>
-#include <cmsys/ios/sstream>
-#include <cmsys/FStream.hxx>
+#include "cmConfigure.h"
+#include "cmsys/FStream.hxx"
+#include "cmsys/Terminal.h"
+#include <algorithm>
 #include <assert.h>
-
+#include <list>
+#include <sstream>
+#include <stdlib.h>
 #include <string.h>
+#include <utility>
+
+#include "cmAlgorithms.h"
+#include "cmCryptoHash.h"
+#include "cmFilePathChecksum.h"
+#include "cmGlobalGenerator.h"
+#include "cmMakefile.h"
+#include "cmOutputConverter.h"
+#include "cmStateDirectory.h"
+#include "cmStateSnapshot.h"
+#include "cmSystemTools.h"
+#include "cm_auto_ptr.hxx"
+#include "cmake.h"
+
 #if defined(__APPLE__)
 #include <unistd.h>
 #endif
 
-#include "cmQtAutoGenerators.h"
+// -- Static variables
 
+static const char* SettingsKeyMoc = "AM_MOC_SETTINGS_HASH";
+static const char* SettingsKeyUic = "AM_UIC_SETTINGS_HASH";
+static const char* SettingsKeyRcc = "AM_RCC_SETTINGS_HASH";
 
-static bool requiresMocing(const std::string& text, std::string &macroName)
+// -- Static functions
+
+inline static std::string Quoted(const std::string& text)
 {
-  // this simple check is much much faster than the regexp
-  if (strstr(text.c_str(), "Q_OBJECT") == NULL
-      && strstr(text.c_str(), "Q_GADGET") == NULL)
-    {
-    return false;
-    }
-
-  cmsys::RegularExpression qObjectRegExp("[\n][ \t]*Q_OBJECT[^a-zA-Z0-9_]");
-  if (qObjectRegExp.find(text))
-    {
-    macroName = "Q_OBJECT";
-    return true;
-    }
-  cmsys::RegularExpression qGadgetRegExp("[\n][ \t]*Q_GADGET[^a-zA-Z0-9_]");
-  if (qGadgetRegExp.find(text))
-    {
-    macroName = "Q_GADGET";
-    return true;
-    }
-  return false;
+  return cmQtAutoGeneratorCommon::Quoted(text);
 }
 
-
-static std::string findMatchingHeader(const std::string& absPath,
-                                      const std::string& mocSubDir,
-                                      const std::string& basename,
-                              const std::vector<std::string>& headerExtensions)
+static std::string QuotedCommand(const std::vector<std::string>& command)
 {
-  std::string header;
-  for(std::vector<std::string>::const_iterator ext = headerExtensions.begin();
-      ext != headerExtensions.end();
-      ++ext)
-    {
-    std::string sourceFilePath = absPath + basename + "." + (*ext);
-    if (cmsys::SystemTools::FileExists(sourceFilePath.c_str()))
-      {
-      header = sourceFilePath;
-      break;
-      }
-    if (!mocSubDir.empty())
-      {
-      sourceFilePath = mocSubDir + basename + "." + (*ext);
-      if (cmsys::SystemTools::FileExists(sourceFilePath.c_str()))
-        {
-        header = sourceFilePath;
-        break;
-        }
-      }
+  std::string res;
+  for (std::vector<std::string>::const_iterator cit = command.begin();
+       cit != command.end(); ++cit) {
+    if (!res.empty()) {
+      res.push_back(' ');
     }
-
-  return header;
+    const std::string cesc = Quoted(*cit);
+    if (cit->empty() || (cesc.size() > (cit->size() + 2)) ||
+        (cesc.find(' ') != std::string::npos)) {
+      res += cesc;
+    } else {
+      res += *cit;
+    }
+  }
+  return res;
 }
 
-
-static std::string extractSubDir(const std::string& absPath,
-                                 const std::string& currentMoc)
+static void InfoGet(cmMakefile* makefile, const char* key, std::string& value)
 {
-  std::string subDir;
-  if (currentMoc.find_first_of('/') != std::string::npos)
-    {
-    subDir = absPath
-                  + cmsys::SystemTools::GetFilenamePath(currentMoc) + '/';
-    }
-  return subDir;
+  value = makefile->GetSafeDefinition(key);
 }
 
-
-static void copyTargetProperty(cmTarget* destinationTarget,
-                               cmTarget* sourceTarget,
-                               const std::string& propertyName)
+static void InfoGet(cmMakefile* makefile, const char* key, bool& value)
 {
-  const char* propertyValue = sourceTarget->GetProperty(propertyName);
-  if (propertyValue)
-    {
-    destinationTarget->SetProperty(propertyName, propertyValue);
-    }
+  value = makefile->IsOn(key);
 }
 
-
-static std::string ReadAll(const std::string& filename)
+static void InfoGet(cmMakefile* makefile, const char* key,
+                    std::vector<std::string>& list)
 {
-  cmsys::ifstream file(filename.c_str());
-  cmsys_ios::stringstream stream;
-  stream << file.rdbuf();
-  file.close();
-  return stream.str();
+  cmSystemTools::ExpandListArgument(makefile->GetSafeDefinition(key), list);
 }
 
-cmQtAutoGenerators::cmQtAutoGenerators()
-:Verbose(cmsys::SystemTools::GetEnv("VERBOSE") != 0)
-,ColorOutput(true)
-,RunMocFailed(false)
-,RunUicFailed(false)
-,RunRccFailed(false)
-,GenerateAll(false)
+static void InfoGetConfig(cmMakefile* makefile, const char* key,
+                          const std::string& config, std::string& value)
 {
-
-  std::string colorEnv = "";
-  cmsys::SystemTools::GetEnv("COLOR", colorEnv);
-  if(!colorEnv.empty())
-    {
-    if(cmSystemTools::IsOn(colorEnv.c_str()))
-      {
-      this->ColorOutput = true;
-      }
-    else
-      {
-      this->ColorOutput = false;
-      }
+  const char* valueConf = CM_NULLPTR;
+  {
+    std::string keyConf = key;
+    if (!config.empty()) {
+      keyConf += "_";
+      keyConf += config;
     }
+    valueConf = makefile->GetDefinition(keyConf);
+  }
+  if (valueConf == CM_NULLPTR) {
+    valueConf = makefile->GetSafeDefinition(key);
+  }
+  value = valueConf;
 }
 
-static std::string getAutogenTargetName(cmTarget const* target)
+static void InfoGetConfig(cmMakefile* makefile, const char* key,
+                          const std::string& config,
+                          std::vector<std::string>& list)
 {
-  std::string autogenTargetName = target->GetName();
-  autogenTargetName += "_automoc";
-  return autogenTargetName;
+  std::string value;
+  InfoGetConfig(makefile, key, config, value);
+  cmSystemTools::ExpandListArgument(value, list);
 }
 
-static std::string getAutogenTargetDir(cmTarget const* target)
+inline static bool SettingsMatch(cmMakefile* makefile, const char* key,
+                                 const std::string& value)
 {
-  cmMakefile* makefile = target->GetMakefile();
-  std::string targetDir = makefile->GetCurrentOutputDirectory();
-  targetDir += makefile->GetCMakeInstance()->GetCMakeFilesDirectory();
-  targetDir += "/";
-  targetDir += getAutogenTargetName(target);
-  targetDir += ".dir/";
-  return targetDir;
+  return (value == makefile->GetSafeDefinition(key));
 }
 
-std::string cmQtAutoGenerators::ListQt5RccInputs(cmSourceFile* sf,
-                                            cmTarget const* target,
-                                            std::vector<std::string>& depends)
+static void SettingAppend(std::string& str, const char* key,
+                          const std::string& value)
 {
-  std::string rccCommand = this->GetRccExecutable(target);
-  std::vector<std::string> qrcEntries;
-
-  std::vector<std::string> command;
-  command.push_back(rccCommand);
-  command.push_back("--list");
-
-  std::string absFile = cmsys::SystemTools::GetRealPath(
-                                              sf->GetFullPath());
-
-  command.push_back(absFile);
-
-  std::string output;
-  int retVal = 0;
-  bool result = cmSystemTools::RunSingleCommand(command, &output,
-                                            &retVal, 0,
-                                            cmSystemTools::OUTPUT_NONE);
-  if (!result || retVal)
-    {
-    std::cerr << "AUTOGEN: error: Rcc list process for " << sf->GetFullPath()
-              << " failed:\n" << output << std::endl;
-    return std::string();
-    }
-
-  std::istringstream ostr(output);
-  std::string oline;
-  while(std::getline(ostr, oline))
-    {
-    if (oline.empty())
-      {
-      // The output of rcc --list contains many empty lines.
-      continue;
-      }
-    if (cmHasLiteralPrefix(oline, "RCC: Error in"))
-      {
-      static std::string searchString = "Cannot find file '";
-
-      std::string::size_type pos = oline.find(searchString);
-      if (pos == std::string::npos)
-        {
-        std::cerr << "AUTOGEN: error: Rcc lists unparsable output "
-                  << oline << std::endl;
-        return std::string();
-        }
-      pos += searchString.length();
-      std::string::size_type sz = oline.size() - pos - 1;
-      qrcEntries.push_back(oline.substr(pos, sz));
-      }
-    else
-      {
-      qrcEntries.push_back(oline);
-      }
-    }
-  depends.insert(depends.end(), qrcEntries.begin(), qrcEntries.end());
-  return cmJoin(qrcEntries, "@list_sep@");
+  if (!value.empty()) {
+    str += "set(";
+    str += key;
+    str += " ";
+    str += cmOutputConverter::EscapeForCMake(value);
+    str += ")\n";
+  }
 }
 
-std::string cmQtAutoGenerators::ListQt4RccInputs(cmSourceFile* sf,
-                                            std::vector<std::string>& depends)
+static std::string SubDirPrefix(const std::string& fileName)
 {
-  const std::string qrcContents = ReadAll(sf->GetFullPath());
-
-  cmsys::RegularExpression fileMatchRegex("(<file[^<]+)");
-
-  std::string entriesList;
-  const char* sep = "";
-
-  size_t offset = 0;
-  while (fileMatchRegex.find(qrcContents.c_str() + offset))
-    {
-    std::string qrcEntry = fileMatchRegex.match(1);
-
-    offset += qrcEntry.size();
-
-    cmsys::RegularExpression fileReplaceRegex("(^<file[^>]*>)");
-    fileReplaceRegex.find(qrcEntry);
-    std::string tag = fileReplaceRegex.match(1);
-
-    qrcEntry = qrcEntry.substr(tag.size());
-
-    if (!cmSystemTools::FileIsFullPath(qrcEntry.c_str()))
-      {
-      qrcEntry = sf->GetLocation().GetDirectory() + "/" + qrcEntry;
-      }
-
-    entriesList += sep;
-    entriesList += qrcEntry;
-    sep = "@list_sep@";
-    depends.push_back(qrcEntry);
-    }
-  return entriesList;
+  std::string res(cmsys::SystemTools::GetFilenamePath(fileName));
+  if (!res.empty()) {
+    res += '/';
+  }
+  return res;
 }
 
-bool cmQtAutoGenerators::InitializeAutogenTarget(cmTarget* target)
+static bool FileNameIsUnique(const std::string& filePath,
+                             const std::map<std::string, std::string>& fileMap)
 {
-  cmMakefile* makefile = target->GetMakefile();
-  // don't do anything if there is no Qt4 or Qt5Core (which contains moc):
-  std::string qtMajorVersion = makefile->GetSafeDefinition("QT_VERSION_MAJOR");
-  if (qtMajorVersion == "")
-    {
-    qtMajorVersion = makefile->GetSafeDefinition("Qt5Core_VERSION_MAJOR");
-    }
-  if (qtMajorVersion != "4" && qtMajorVersion != "5")
-    {
-    return false;
-    }
-
-  if (target->GetPropertyAsBool("AUTOMOC"))
-    {
-    std::string automocTargetName = getAutogenTargetName(target);
-    std::string mocCppFile = makefile->GetCurrentOutputDirectory();
-    mocCppFile += "/";
-    mocCppFile += automocTargetName;
-    mocCppFile += ".cpp";
-    makefile->GetOrCreateSource(mocCppFile, true);
-    makefile->AppendProperty("ADDITIONAL_MAKE_CLEAN_FILES",
-                            mocCppFile.c_str(), false);
-
-    target->AddSource(mocCppFile);
-    }
-  // create a custom target for running generators at buildtime:
-  std::string autogenTargetName = getAutogenTargetName(target);
-
-  std::string targetDir = getAutogenTargetDir(target);
-
-  cmCustomCommandLine currentLine;
-  currentLine.push_back(makefile->GetSafeDefinition("CMAKE_COMMAND"));
-  currentLine.push_back("-E");
-  currentLine.push_back("cmake_autogen");
-  currentLine.push_back(targetDir);
-  currentLine.push_back("$<CONFIGURATION>");
-
-  cmCustomCommandLines commandLines;
-  commandLines.push_back(currentLine);
-
-  std::string workingDirectory = cmSystemTools::CollapseFullPath(
-                                    "", makefile->GetCurrentOutputDirectory());
-
-  std::vector<std::string> depends;
-  if (const char *autogenDepends =
-                                target->GetProperty("AUTOGEN_TARGET_DEPENDS"))
-    {
-    cmSystemTools::ExpandListArgument(autogenDepends, depends);
-    }
-  std::vector<std::string> toolNames;
-  if (target->GetPropertyAsBool("AUTOMOC"))
-    {
-    toolNames.push_back("moc");
-    }
-  if (target->GetPropertyAsBool("AUTOUIC"))
-    {
-    toolNames.push_back("uic");
-    }
-  if (target->GetPropertyAsBool("AUTORCC"))
-    {
-    toolNames.push_back("rcc");
-    }
-
-  std::string tools = toolNames[0];
-  toolNames.erase(toolNames.begin());
-  while (toolNames.size() > 1)
-    {
-    tools += ", " + toolNames[0];
-    toolNames.erase(toolNames.begin());
-    }
-  if (toolNames.size() == 1)
-    {
-    tools += " and " + toolNames[0];
-    }
-  std::string autogenComment = "Automatic " + tools + " for target ";
-  autogenComment += target->GetName();
-
-#if defined(_WIN32) && !defined(__CYGWIN__)
-  bool usePRE_BUILD = false;
-  cmLocalGenerator* localGen = makefile->GetLocalGenerator();
-  cmGlobalGenerator* gg = localGen->GetGlobalGenerator();
-  if(gg->GetName().find("Visual Studio") != std::string::npos)
-    {
-    cmLocalVisualStudioGenerator* vslg =
-      static_cast<cmLocalVisualStudioGenerator*>(localGen);
-    // Under VS >= 7 use a PRE_BUILD event instead of a separate target to
-    // reduce the number of targets loaded into the IDE.
-    // This also works around a VS 11 bug that may skip updating the target:
-    //  https://connect.microsoft.com/VisualStudio/feedback/details/769495
-    usePRE_BUILD = vslg->GetVersion() >= cmLocalVisualStudioGenerator::VS7;
-    if(usePRE_BUILD)
-      {
-      for (std::vector<std::string>::iterator it = depends.begin();
-            it != depends.end(); ++it)
-        {
-        if(!makefile->FindTargetToUse(it->c_str()))
-          {
-          usePRE_BUILD = false;
-          break;
-          }
-        }
+  size_t count(0);
+  const std::string fileName = cmsys::SystemTools::GetFilenameName(filePath);
+  for (std::map<std::string, std::string>::const_iterator si = fileMap.begin();
+       si != fileMap.end(); ++si) {
+    if (cmsys::SystemTools::GetFilenameName(si->first) == fileName) {
+      ++count;
+      if (count > 1) {
+        return false;
       }
     }
-#endif
-
-  std::vector<std::string> rcc_output;
-  if(makefile->GetLocalGenerator()->GetGlobalGenerator()->GetName() == "Ninja"
-#if defined(_WIN32) && !defined(__CYGWIN__)
-        || usePRE_BUILD
-#endif
-        )
-    {
-    std::vector<cmSourceFile*> srcFiles;
-    target->GetConfigCommonSourceFiles(srcFiles);
-    for(std::vector<cmSourceFile*>::const_iterator fileIt = srcFiles.begin();
-        fileIt != srcFiles.end();
-        ++fileIt)
-      {
-      cmSourceFile* sf = *fileIt;
-      std::string absFile = cmsys::SystemTools::GetRealPath(
-                                                sf->GetFullPath());
-
-      std::string ext = sf->GetExtension();
-
-      if (target->GetPropertyAsBool("AUTORCC"))
-        {
-        if (ext == "qrc"
-            && !cmSystemTools::IsOn(sf->GetPropertyForUser("SKIP_AUTORCC")))
-          {
-          std::string basename = cmsys::SystemTools::
-                                  GetFilenameWithoutLastExtension(absFile);
-
-          std::string rcc_output_dir = target->GetSupportDirectory();
-          cmSystemTools::MakeDirectory(rcc_output_dir.c_str());
-          std::string rcc_output_file = rcc_output_dir;
-          rcc_output_file += "/qrc_" + basename + ".cpp";
-          rcc_output.push_back(rcc_output_file);
-
-          if (!cmSystemTools::IsOn(sf->GetPropertyForUser("GENERATED")))
-            {
-            if (qtMajorVersion == "5")
-              {
-              this->ListQt5RccInputs(sf, target, depends);
-              }
-            else
-              {
-              this->ListQt4RccInputs(sf, depends);
-              }
-#if defined(_WIN32) && !defined(__CYGWIN__)
-            usePRE_BUILD = false;
-#endif
-            }
-          }
-        }
-      }
-    }
-
-#if defined(_WIN32) && !defined(__CYGWIN__)
-  if(usePRE_BUILD)
-    {
-    // Add the pre-build command directly to bypass the OBJECT_LIBRARY
-    // rejection in cmMakefile::AddCustomCommandToTarget because we know
-    // PRE_BUILD will work for an OBJECT_LIBRARY in this specific case.
-    std::vector<std::string> no_output;
-    std::vector<std::string> no_byproducts;
-    cmCustomCommand cc(makefile, no_output, no_byproducts, depends,
-                       commandLines, autogenComment.c_str(),
-                       workingDirectory.c_str());
-    cc.SetEscapeOldStyle(false);
-    cc.SetEscapeAllowMakeVars(true);
-    target->AddPreBuildCommand(cc);
-    }
-  else
-#endif
-    {
-    cmTarget* autogenTarget = 0;
-    if (!rcc_output.empty())
-      {
-      std::vector<std::string> no_byproducts;
-      makefile->AddCustomCommandToOutput(rcc_output, no_byproducts,
-                                         depends, "",
-                                         commandLines, 0,
-                                         workingDirectory.c_str(),
-                                         false, false);
-
-      cmCustomCommandLines no_commands;
-      autogenTarget = makefile->AddUtilityCommand(
-                          autogenTargetName, true,
-                          workingDirectory.c_str(), rcc_output,
-                          no_commands, false, autogenComment.c_str());
-
-      }
-    else
-      {
-      autogenTarget = makefile->AddUtilityCommand(
-                                autogenTargetName, true,
-                                workingDirectory.c_str(), depends,
-                                commandLines, false, autogenComment.c_str());
-      }
-
-    // Set target folder
-    const char* autogenFolder = makefile->GetCMakeInstance()->GetProperty(
-                                                     "AUTOMOC_TARGETS_FOLDER");
-    if (!autogenFolder)
-      {
-      autogenFolder = makefile->GetCMakeInstance()->GetProperty(
-                                                     "AUTOGEN_TARGETS_FOLDER");
-      }
-    if (autogenFolder && *autogenFolder)
-      {
-      autogenTarget->SetProperty("FOLDER", autogenFolder);
-      }
-    else
-      {
-      // inherit FOLDER property from target (#13688)
-      copyTargetProperty(autogenTarget, target, "FOLDER");
-      }
-
-    target->AddUtility(autogenTargetName);
-    }
-
+  }
   return true;
 }
 
-static void GetCompileDefinitionsAndDirectories(cmTarget const* target,
-                                                const std::string& config,
-                                                std::string &incs,
-                                                std::string &defs)
+static bool ReadAll(std::string& content, const std::string& filename)
 {
-  cmMakefile* makefile = target->GetMakefile();
-  cmLocalGenerator* localGen = makefile->GetLocalGenerator();
-  std::vector<std::string> includeDirs;
-  cmGeneratorTarget *gtgt = target->GetMakefile()->GetLocalGenerator()
-                                 ->GetGlobalGenerator()
-                                 ->GetGeneratorTarget(target);
-  // Get the include dirs for this target, without stripping the implicit
-  // include dirs off, see http://public.kitware.com/Bug/view.php?id=13667
-  localGen->GetIncludeDirectories(includeDirs, gtgt, "CXX", config, false);
-
-  incs = cmJoin(includeDirs, ";");
-
-  std::set<std::string> defines;
-  localGen->AddCompileDefinitions(defines, target, config, "CXX");
-
-  defs += cmJoin(defines, ";");
+  bool success = false;
+  {
+    cmsys::ifstream ifs(filename.c_str());
+    if (ifs) {
+      std::ostringstream osst;
+      osst << ifs.rdbuf();
+      content = osst.str();
+      success = true;
+    }
+  }
+  return success;
 }
 
-void cmQtAutoGenerators::SetupAutoGenerateTarget(cmTarget const* target)
+/**
+ * @brief Tests if buildFile doesn't exist or is older than sourceFile
+ * @return True if buildFile doesn't exist or is older than sourceFile
+ */
+static bool FileAbsentOrOlder(const std::string& buildFile,
+                              const std::string& sourceFile)
 {
-  cmMakefile* makefile = target->GetMakefile();
-
-  // forget the variables added here afterwards again:
-  cmMakefile::ScopePushPop varScope(makefile);
-  static_cast<void>(varScope);
-
-  // create a custom target for running generators at buildtime:
-  std::string autogenTargetName = getAutogenTargetName(target);
-
-  makefile->AddDefinition("_moc_target_name",
-          cmLocalGenerator::EscapeForCMake(autogenTargetName).c_str());
-  makefile->AddDefinition("_origin_target_name",
-          cmLocalGenerator::EscapeForCMake(target->GetName()).c_str());
-
-  std::string targetDir = getAutogenTargetDir(target);
-
-  const char *qtVersion = makefile->GetDefinition("Qt5Core_VERSION_MAJOR");
-  if (!qtVersion)
-    {
-    qtVersion = makefile->GetDefinition("QT_VERSION_MAJOR");
-    }
-  if (const char *targetQtVersion =
-      target->GetLinkInterfaceDependentStringProperty("QT_MAJOR_VERSION", ""))
-    {
-    qtVersion = targetQtVersion;
-    }
-  if (qtVersion)
-    {
-    makefile->AddDefinition("_target_qt_version", qtVersion);
-    }
-
-  std::map<std::string, std::string> configIncludes;
-  std::map<std::string, std::string> configDefines;
-  std::map<std::string, std::string> configUicOptions;
-
-  if (target->GetPropertyAsBool("AUTOMOC")
-      || target->GetPropertyAsBool("AUTOUIC")
-      || target->GetPropertyAsBool("AUTORCC"))
-    {
-    this->SetupSourceFiles(target);
-    }
-  makefile->AddDefinition("_cpp_files",
-          cmLocalGenerator::EscapeForCMake(this->Sources).c_str());
-  if (target->GetPropertyAsBool("AUTOMOC"))
-    {
-    this->SetupAutoMocTarget(target, autogenTargetName,
-                             configIncludes, configDefines);
-    }
-  if (target->GetPropertyAsBool("AUTOUIC"))
-    {
-    this->SetupAutoUicTarget(target, configUicOptions);
-    }
-  if (target->GetPropertyAsBool("AUTORCC"))
-    {
-    this->SetupAutoRccTarget(target);
-    }
-
-  const char* cmakeRoot = makefile->GetSafeDefinition("CMAKE_ROOT");
-  std::string inputFile = cmakeRoot;
-  inputFile += "/Modules/AutogenInfo.cmake.in";
-  std::string outputFile = targetDir;
-  outputFile += "/AutogenInfo.cmake";
-  makefile->AddDefinition("_qt_rcc_inputs",
-              makefile->GetDefinition("_qt_rcc_inputs_" + target->GetName()));
-  makefile->ConfigureFile(inputFile.c_str(), outputFile.c_str(),
-                          false, true, false);
-
-  if (!configDefines.empty()
-      || !configIncludes.empty()
-      || !configUicOptions.empty())
-    {
-    cmsys::ofstream infoFile(outputFile.c_str(), std::ios::app);
-    if ( !infoFile )
-      {
-      std::string error = "Internal CMake error when trying to open file: ";
-      error += outputFile.c_str();
-      error += " for writing.";
-      cmSystemTools::Error(error.c_str());
-      return;
-      }
-    if (!configDefines.empty())
-      {
-      for (std::map<std::string, std::string>::iterator
-            it = configDefines.begin(), end = configDefines.end();
-            it != end; ++it)
-        {
-        infoFile << "set(AM_MOC_COMPILE_DEFINITIONS_" << it->first <<
-          " " << it->second << ")\n";
-        }
-      }
-    if (!configIncludes.empty())
-      {
-      for (std::map<std::string, std::string>::iterator
-            it = configIncludes.begin(), end = configIncludes.end();
-            it != end; ++it)
-        {
-        infoFile << "set(AM_MOC_INCLUDES_" << it->first <<
-          " " << it->second << ")\n";
-        }
-      }
-    if (!configUicOptions.empty())
-      {
-      for (std::map<std::string, std::string>::iterator
-            it = configUicOptions.begin(), end = configUicOptions.end();
-            it != end; ++it)
-        {
-        infoFile << "set(AM_UIC_TARGET_OPTIONS_" << it->first <<
-          " " << it->second << ")\n";
-        }
-      }
-    }
+  int result = 0;
+  bool success =
+    cmsys::SystemTools::FileTimeCompare(buildFile, sourceFile, &result);
+  return (!success || (result <= 0));
 }
 
-void cmQtAutoGenerators::SetupSourceFiles(cmTarget const* target)
+static bool ListContains(const std::vector<std::string>& list,
+                         const std::string& entry)
 {
-  cmMakefile* makefile = target->GetMakefile();
-
-  const char* sepFiles = "";
-  const char* sepHeaders = "";
-
-  std::vector<cmSourceFile*> srcFiles;
-  target->GetConfigCommonSourceFiles(srcFiles);
-
-  const char *skipMocSep = "";
-  const char *skipUicSep = "";
-
-  std::vector<std::string> newRccFiles;
-
-  for(std::vector<cmSourceFile*>::const_iterator fileIt = srcFiles.begin();
-      fileIt != srcFiles.end();
-      ++fileIt)
-    {
-    cmSourceFile* sf = *fileIt;
-    std::string absFile = cmsys::SystemTools::GetRealPath(
-                                                    sf->GetFullPath());
-    bool skipMoc = cmSystemTools::IsOn(sf->GetPropertyForUser("SKIP_AUTOMOC"));
-    bool generated = cmSystemTools::IsOn(sf->GetPropertyForUser("GENERATED"));
-
-    if(cmSystemTools::IsOn(sf->GetPropertyForUser("SKIP_AUTOUIC")))
-      {
-      this->SkipUic += skipUicSep;
-      this->SkipUic += absFile;
-      skipUicSep = ";";
-      }
-
-    std::string ext = sf->GetExtension();
-
-    if (target->GetPropertyAsBool("AUTORCC"))
-      {
-      if (ext == "qrc"
-          && !cmSystemTools::IsOn(sf->GetPropertyForUser("SKIP_AUTORCC")))
-        {
-        std::string basename = cmsys::SystemTools::
-                                      GetFilenameWithoutLastExtension(absFile);
-
-        std::string rcc_output_dir = target->GetSupportDirectory();
-        cmSystemTools::MakeDirectory(rcc_output_dir.c_str());
-        std::string rcc_output_file = rcc_output_dir;
-        rcc_output_file += "/qrc_" + basename + ".cpp";
-        makefile->AppendProperty("ADDITIONAL_MAKE_CLEAN_FILES",
-                                rcc_output_file.c_str(), false);
-        makefile->GetOrCreateSource(rcc_output_file, true);
-        newRccFiles.push_back(rcc_output_file);
-        }
-      }
-
-    if (!generated)
-      {
-      if (skipMoc)
-        {
-        this->SkipMoc += skipMocSep;
-        this->SkipMoc += absFile;
-        skipMocSep = ";";
-        }
-      else
-        {
-        cmSystemTools::FileFormat fileType = cmSystemTools::GetFileFormat(
-                                                                ext.c_str());
-        if (fileType == cmSystemTools::CXX_FILE_FORMAT)
-          {
-          this->Sources += sepFiles;
-          this->Sources += absFile;
-          sepFiles = ";";
-          }
-        else if (fileType == cmSystemTools::HEADER_FILE_FORMAT)
-          {
-          this->Headers += sepHeaders;
-          this->Headers += absFile;
-          sepHeaders = ";";
-          }
-        }
-      }
-    }
-
-  for(std::vector<std::string>::const_iterator fileIt = newRccFiles.begin();
-      fileIt != newRccFiles.end();
-      ++fileIt)
-    {
-    const_cast<cmTarget*>(target)->AddSource(*fileIt);
-    }
+  return (std::find(list.begin(), list.end(), entry) != list.end());
 }
 
-void cmQtAutoGenerators::SetupAutoMocTarget(cmTarget const* target,
-                          const std::string &autogenTargetName,
-                          std::map<std::string, std::string> &configIncludes,
-                          std::map<std::string, std::string> &configDefines)
+static std::string JoinOptionsList(const std::vector<std::string>& opts)
 {
-  cmMakefile* makefile = target->GetMakefile();
-
-  const char* tmp = target->GetProperty("AUTOMOC_MOC_OPTIONS");
-  std::string _moc_options = (tmp!=0 ? tmp : "");
-  makefile->AddDefinition("_moc_options",
-          cmLocalGenerator::EscapeForCMake(_moc_options).c_str());
-  makefile->AddDefinition("_skip_moc",
-          cmLocalGenerator::EscapeForCMake(this->SkipMoc).c_str());
-  makefile->AddDefinition("_moc_headers",
-          cmLocalGenerator::EscapeForCMake(this->Headers).c_str());
-  bool relaxedMode = makefile->IsOn("CMAKE_AUTOMOC_RELAXED_MODE");
-  makefile->AddDefinition("_moc_relaxed_mode", relaxedMode ? "TRUE" : "FALSE");
-
-  std::string _moc_incs;
-  std::string _moc_compile_defs;
-  std::vector<std::string> configs;
-  const std::string& config = makefile->GetConfigurations(configs);
-  GetCompileDefinitionsAndDirectories(target, config,
-                                      _moc_incs, _moc_compile_defs);
-
-  makefile->AddDefinition("_moc_incs",
-          cmLocalGenerator::EscapeForCMake(_moc_incs).c_str());
-  makefile->AddDefinition("_moc_compile_defs",
-          cmLocalGenerator::EscapeForCMake(_moc_compile_defs).c_str());
-
-  for (std::vector<std::string>::const_iterator li = configs.begin();
-       li != configs.end(); ++li)
-    {
-    std::string config_moc_incs;
-    std::string config_moc_compile_defs;
-    GetCompileDefinitionsAndDirectories(target, *li,
-                                        config_moc_incs,
-                                        config_moc_compile_defs);
-    if (config_moc_incs != _moc_incs)
-      {
-      configIncludes[*li] =
-                    cmLocalGenerator::EscapeForCMake(config_moc_incs);
-      if(_moc_incs.empty())
-        {
-        _moc_incs = config_moc_incs;
-        }
-      }
-    if (config_moc_compile_defs != _moc_compile_defs)
-      {
-      configDefines[*li] =
-            cmLocalGenerator::EscapeForCMake(config_moc_compile_defs);
-      if(_moc_compile_defs.empty())
-        {
-        _moc_compile_defs = config_moc_compile_defs;
-        }
-      }
-    }
-
-  const char *qtVersion = makefile->GetDefinition("_target_qt_version");
-  if (strcmp(qtVersion, "5") == 0)
-    {
-    cmTarget *qt5Moc = makefile->FindTargetToUse("Qt5::moc");
-    if (!qt5Moc)
-      {
-      cmSystemTools::Error("Qt5::moc target not found ",
-                          autogenTargetName.c_str());
-      return;
-      }
-    makefile->AddDefinition("_qt_moc_executable", qt5Moc->GetLocation(""));
-    }
-  else if (strcmp(qtVersion, "4") == 0)
-    {
-    cmTarget *qt4Moc = makefile->FindTargetToUse("Qt4::moc");
-    if (!qt4Moc)
-      {
-      cmSystemTools::Error("Qt4::moc target not found ",
-                          autogenTargetName.c_str());
-      return;
-      }
-    makefile->AddDefinition("_qt_moc_executable", qt4Moc->GetLocation(""));
-    }
-  else
-    {
-    cmSystemTools::Error("The CMAKE_AUTOMOC feature supports only Qt 4 and "
-                        "Qt 5 ", autogenTargetName.c_str());
-    }
+  return cmOutputConverter::EscapeForCMake(cmJoin(opts, ";"));
 }
 
-void cmQtAutoGenerators::MergeUicOptions(std::vector<std::string> &opts,
-                         const std::vector<std::string> &fileOpts,
-                         bool isQt5)
+static std::string JoinOptionsMap(
+  const std::map<std::string, std::string>& opts)
 {
-  static const char* valueOptions[] = {
-    "tr",
-    "translate",
-    "postfix",
-    "generator",
-    "include", // Since Qt 5.3
-    "g"
-  };
+  std::string result;
+  for (std::map<std::string, std::string>::const_iterator it = opts.begin();
+       it != opts.end(); ++it) {
+    if (it != opts.begin()) {
+      result += cmQtAutoGeneratorCommon::listSep;
+    }
+    result += it->first;
+    result += "===";
+    result += it->second;
+  }
+  return result;
+}
+
+static std::string JoinExts(const std::vector<std::string>& lst)
+{
+  std::string result;
+  if (!lst.empty()) {
+    const std::string separator = ",";
+    for (std::vector<std::string>::const_iterator it = lst.begin();
+         it != lst.end(); ++it) {
+      if (it != lst.begin()) {
+        result += separator;
+      }
+      result += '.';
+      result += *it;
+    }
+  }
+  return result;
+}
+
+static void UicMergeOptions(std::vector<std::string>& opts,
+                            const std::vector<std::string>& fileOpts,
+                            bool isQt5)
+{
+  static const char* valueOptions[] = { "tr",      "translate",
+                                        "postfix", "generator",
+                                        "include", // Since Qt 5.3
+                                        "g" };
   std::vector<std::string> extraOpts;
-  for(std::vector<std::string>::const_iterator it = fileOpts.begin();
-      it != fileOpts.end(); ++it)
-    {
-    std::vector<std::string>::iterator existingIt
-                                  = std::find(opts.begin(), opts.end(), *it);
-    if (existingIt != opts.end())
-      {
-      const char *o = it->c_str();
-      if (*o == '-')
-        {
+  for (std::vector<std::string>::const_iterator it = fileOpts.begin();
+       it != fileOpts.end(); ++it) {
+    std::vector<std::string>::iterator existingIt =
+      std::find(opts.begin(), opts.end(), *it);
+    if (existingIt != opts.end()) {
+      const char* o = it->c_str();
+      if (*o == '-') {
         ++o;
-        }
-      if (isQt5 && *o == '-')
-        {
+      }
+      if (isQt5 && *o == '-') {
         ++o;
-        }
+      }
       if (std::find_if(cmArrayBegin(valueOptions), cmArrayEnd(valueOptions),
-                  cmStrCmp(*it)) != cmArrayEnd(valueOptions))
-        {
+                       cmStrCmp(*it)) != cmArrayEnd(valueOptions)) {
         assert(existingIt + 1 != opts.end());
         *(existingIt + 1) = *(it + 1);
         ++it;
-        }
       }
-    else
-      {
+    } else {
       extraOpts.push_back(*it);
-      }
     }
+  }
   opts.insert(opts.end(), extraOpts.begin(), extraOpts.end());
 }
 
-static void GetUicOpts(cmTarget const* target, const std::string& config,
-                       std::string &optString)
+// -- Class methods
+
+cmQtAutoGenerators::cmQtAutoGenerators()
+  : Verbose(cmsys::SystemTools::HasEnv("VERBOSE"))
+  , ColorOutput(true)
+  , MocSettingsChanged(false)
+  , MocPredefsChanged(false)
+  , MocRunFailed(false)
+  , UicSettingsChanged(false)
+  , UicRunFailed(false)
+  , RccSettingsChanged(false)
+  , RccRunFailed(false)
 {
-  std::vector<std::string> opts;
-  target->GetAutoUicOptions(opts, config);
-  optString = cmJoin(opts, ";");
-}
 
-void cmQtAutoGenerators::SetupAutoUicTarget(cmTarget const* target,
-                          std::map<std::string, std::string> &configUicOptions)
-{
-  cmMakefile *makefile = target->GetMakefile();
-
-  std::set<std::string> skipped;
-  std::vector<std::string> skipVec;
-  cmSystemTools::ExpandListArgument(this->SkipUic, skipVec);
-  skipped.insert(skipVec.begin(), skipVec.end());
-
-  makefile->AddDefinition("_skip_uic",
-          cmLocalGenerator::EscapeForCMake(this->SkipUic).c_str());
-
-  std::vector<cmSourceFile*> uiFilesWithOptions
-                                        = makefile->GetQtUiFilesWithOptions();
-
-  const char *qtVersion = makefile->GetDefinition("_target_qt_version");
-
-  std::string _uic_opts;
-  std::vector<std::string> configs;
-  const std::string& config = makefile->GetConfigurations(configs);
-  GetUicOpts(target, config, _uic_opts);
-
-  if (!_uic_opts.empty())
-    {
-    _uic_opts = cmLocalGenerator::EscapeForCMake(_uic_opts);
-    makefile->AddDefinition("_uic_target_options", _uic_opts.c_str());
+  std::string colorEnv;
+  cmsys::SystemTools::GetEnv("COLOR", colorEnv);
+  if (!colorEnv.empty()) {
+    if (cmSystemTools::IsOn(colorEnv.c_str())) {
+      this->ColorOutput = true;
+    } else {
+      this->ColorOutput = false;
     }
-  for (std::vector<std::string>::const_iterator li = configs.begin();
-       li != configs.end(); ++li)
-    {
-    std::string config_uic_opts;
-    GetUicOpts(target, *li, config_uic_opts);
-    if (config_uic_opts != _uic_opts)
-      {
-      configUicOptions[*li] =
-                    cmLocalGenerator::EscapeForCMake(config_uic_opts);
-      if(_uic_opts.empty())
-        {
-        _uic_opts = config_uic_opts;
-        }
-      }
-    }
+  }
 
-  std::string uiFileFiles;
-  std::string uiFileOptions;
-  const char* sep = "";
+  // Moc macro filters
+  this->MocMacroFilters[0].first = "Q_OBJECT";
+  this->MocMacroFilters[0].second.compile("[\n][ \t]*Q_OBJECT[^a-zA-Z0-9_]");
+  this->MocMacroFilters[1].first = "Q_GADGET";
+  this->MocMacroFilters[1].second.compile("[\n][ \t]*Q_GADGET[^a-zA-Z0-9_]");
 
-  for(std::vector<cmSourceFile*>::const_iterator fileIt =
-      uiFilesWithOptions.begin();
-      fileIt != uiFilesWithOptions.end();
-      ++fileIt)
-    {
-    cmSourceFile* sf = *fileIt;
-    std::string absFile = cmsys::SystemTools::GetRealPath(
-                                                    sf->GetFullPath());
-
-    if (!skipped.insert(absFile).second)
-      {
-      continue;
-      }
-    uiFileFiles += sep;
-    uiFileFiles += absFile;
-    uiFileOptions += sep;
-    std::string opts = sf->GetProperty("AUTOUIC_OPTIONS");
-    cmSystemTools::ReplaceString(opts, ";", "@list_sep@");
-    uiFileOptions += opts;
-    sep = ";";
-    }
-
-  makefile->AddDefinition("_qt_uic_options_files",
-              cmLocalGenerator::EscapeForCMake(uiFileFiles).c_str());
-  makefile->AddDefinition("_qt_uic_options_options",
-            cmLocalGenerator::EscapeForCMake(uiFileOptions).c_str());
-
-  std::string targetName = target->GetName();
-  if (strcmp(qtVersion, "5") == 0)
-    {
-    cmTarget *qt5Uic = makefile->FindTargetToUse("Qt5::uic");
-    if (!qt5Uic)
-      {
-      // Project does not use Qt5Widgets, but has AUTOUIC ON anyway
-      }
-    else
-      {
-      makefile->AddDefinition("_qt_uic_executable", qt5Uic->GetLocation(""));
-      }
-    }
-  else if (strcmp(qtVersion, "4") == 0)
-    {
-    cmTarget *qt4Uic = makefile->FindTargetToUse("Qt4::uic");
-    if (!qt4Uic)
-      {
-      cmSystemTools::Error("Qt4::uic target not found ",
-                          targetName.c_str());
-      return;
-      }
-    makefile->AddDefinition("_qt_uic_executable", qt4Uic->GetLocation(""));
-    }
-  else
-    {
-    cmSystemTools::Error("The CMAKE_AUTOUIC feature supports only Qt 4 and "
-                        "Qt 5 ", targetName.c_str());
-    }
-}
-
-void cmQtAutoGenerators::MergeRccOptions(std::vector<std::string> &opts,
-                         const std::vector<std::string> &fileOpts,
-                         bool isQt5)
-{
-  static const char* valueOptions[] = {
-    "name",
-    "root",
-    "compress",
-    "threshold"
-  };
-  std::vector<std::string> extraOpts;
-  for(std::vector<std::string>::const_iterator it = fileOpts.begin();
-      it != fileOpts.end(); ++it)
-    {
-    std::vector<std::string>::iterator existingIt
-                                  = std::find(opts.begin(), opts.end(), *it);
-    if (existingIt != opts.end())
-      {
-      const char *o = it->c_str();
-      if (*o == '-')
-        {
-        ++o;
-        }
-      if (isQt5 && *o == '-')
-        {
-        ++o;
-        }
-      if (std::find_if(cmArrayBegin(valueOptions), cmArrayEnd(valueOptions),
-                  cmStrCmp(*it)) != cmArrayEnd(valueOptions))
-        {
-        assert(existingIt + 1 != opts.end());
-        *(existingIt + 1) = *(it + 1);
-        ++it;
-        }
-      }
-    else
-      {
-      extraOpts.push_back(*it);
-      }
-    }
-  opts.insert(opts.end(), extraOpts.begin(), extraOpts.end());
-}
-
-void cmQtAutoGenerators::SetupAutoRccTarget(cmTarget const* target)
-{
-  std::string _rcc_files;
-  const char* sepRccFiles = "";
-  cmMakefile *makefile = target->GetMakefile();
-
-  std::vector<cmSourceFile*> srcFiles;
-  target->GetConfigCommonSourceFiles(srcFiles);
-
-  std::string qrcInputs;
-  const char* qrcInputsSep = "";
-
-  std::string rccFileFiles;
-  std::string rccFileOptions;
-  const char *optionSep = "";
-
-  const char *qtVersion = makefile->GetDefinition("_target_qt_version");
-
-  std::vector<std::string> rccOptions;
-  if (const char* opts = target->GetProperty("AUTORCC_OPTIONS"))
-    {
-    cmSystemTools::ExpandListArgument(opts, rccOptions);
-    }
-  std::string qtMajorVersion = makefile->GetSafeDefinition("QT_VERSION_MAJOR");
-  if (qtMajorVersion == "")
-    {
-    qtMajorVersion = makefile->GetSafeDefinition("Qt5Core_VERSION_MAJOR");
-    }
-
-  for(std::vector<cmSourceFile*>::const_iterator fileIt = srcFiles.begin();
-      fileIt != srcFiles.end();
-      ++fileIt)
-    {
-    cmSourceFile* sf = *fileIt;
-    std::string ext = sf->GetExtension();
-    if (ext == "qrc")
-      {
-      std::string absFile = cmsys::SystemTools::GetRealPath(
-                                                  sf->GetFullPath());
-      bool skip = cmSystemTools::IsOn(sf->GetPropertyForUser("SKIP_AUTORCC"));
-
-      if (!skip)
-        {
-        _rcc_files += sepRccFiles;
-        _rcc_files += absFile;
-        sepRccFiles = ";";
-
-        if (const char *prop = sf->GetProperty("AUTORCC_OPTIONS"))
-          {
-          std::vector<std::string> optsVec;
-          cmSystemTools::ExpandListArgument(prop, optsVec);
-          this->MergeRccOptions(rccOptions, optsVec,
-                                strcmp(qtVersion, "5") == 0);
-          }
-
-        if (!rccOptions.empty())
-          {
-          rccFileFiles += optionSep;
-          rccFileFiles += absFile;
-          rccFileOptions += optionSep;
-          }
-        const char *listSep = "";
-        for(std::vector<std::string>::const_iterator it = rccOptions.begin();
-            it != rccOptions.end();
-            ++it)
-          {
-          rccFileOptions += listSep;
-          rccFileOptions += *it;
-          listSep = "@list_sep@";
-          }
-        optionSep = ";";
-
-        std::vector<std::string> depends;
-
-        std::string entriesList;
-        if (!cmSystemTools::IsOn(sf->GetPropertyForUser("GENERATED")))
-          {
-          if (qtMajorVersion == "5")
-            {
-            entriesList = this->ListQt5RccInputs(sf, target, depends);
-            }
-          else
-            {
-            entriesList = this->ListQt4RccInputs(sf, depends);
-            }
-          if (entriesList.empty())
-            {
-            return;
-            }
-          }
-        qrcInputs += qrcInputsSep;
-        qrcInputs += entriesList;
-        qrcInputsSep = ";";
-        }
-      }
-    }
-  makefile->AddDefinition("_qt_rcc_inputs_" + target->GetName(),
-                      cmLocalGenerator::EscapeForCMake(qrcInputs).c_str());
-
-  makefile->AddDefinition("_rcc_files",
-          cmLocalGenerator::EscapeForCMake(_rcc_files).c_str());
-
-  makefile->AddDefinition("_qt_rcc_options_files",
-              cmLocalGenerator::EscapeForCMake(rccFileFiles).c_str());
-  makefile->AddDefinition("_qt_rcc_options_options",
-            cmLocalGenerator::EscapeForCMake(rccFileOptions).c_str());
-
-  makefile->AddDefinition("_qt_rcc_executable",
-                          this->GetRccExecutable(target).c_str());
-}
-
-std::string cmQtAutoGenerators::GetRccExecutable(cmTarget const* target)
-{
-  cmMakefile *makefile = target->GetMakefile();
-  const char *qtVersion = makefile->GetDefinition("_target_qt_version");
-  if (!qtVersion)
-    {
-    qtVersion = makefile->GetDefinition("Qt5Core_VERSION_MAJOR");
-    if (!qtVersion)
-      {
-      qtVersion = makefile->GetDefinition("QT_VERSION_MAJOR");
-      }
-    if (const char *targetQtVersion =
-        target->GetLinkInterfaceDependentStringProperty("QT_MAJOR_VERSION",
-                                                        ""))
-      {
-      qtVersion = targetQtVersion;
-      }
-    }
-
-  std::string targetName = target->GetName();
-  if (strcmp(qtVersion, "5") == 0)
-    {
-    cmTarget *qt5Rcc = makefile->FindTargetToUse("Qt5::rcc");
-    if (!qt5Rcc)
-      {
-      cmSystemTools::Error("Qt5::rcc target not found ",
-                          targetName.c_str());
-      return std::string();
-      }
-    return qt5Rcc->GetLocation("");
-    }
-  else if (strcmp(qtVersion, "4") == 0)
-    {
-    cmTarget *qt4Rcc = makefile->FindTargetToUse("Qt4::rcc");
-    if (!qt4Rcc)
-      {
-      cmSystemTools::Error("Qt4::rcc target not found ",
-                          targetName.c_str());
-      return std::string();
-      }
-    return qt4Rcc->GetLocation("");
-    }
-
-  cmSystemTools::Error("The CMAKE_AUTORCC feature supports only Qt 4 and "
-                      "Qt 5 ", targetName.c_str());
-  return std::string();
-}
-
-static cmGlobalGenerator* CreateGlobalGenerator(cmake* cm,
-                                            const std::string& targetDirectory)
-{
-  cmGlobalGenerator* gg = new cmGlobalGenerator();
-  gg->SetCMakeInstance(cm);
-
-  cmLocalGenerator* lg = gg->CreateLocalGenerator();
-  lg->GetMakefile()->SetHomeOutputDirectory(targetDirectory);
-  lg->GetMakefile()->SetStartOutputDirectory(targetDirectory);
-  lg->GetMakefile()->SetHomeDirectory(targetDirectory);
-  lg->GetMakefile()->SetStartDirectory(targetDirectory);
-  gg->SetCurrentLocalGenerator(lg);
-
-  return gg;
+  // Precompile regular expressions
+  this->MocRegExpInclude.compile(
+    "[\n][ \t]*#[ \t]*include[ \t]+"
+    "[\"<](([^ \">]+/)?moc_[^ \">/]+\\.cpp|[^ \">]+\\.moc)[\">]");
+  this->UicRegExpInclude.compile("[\n][ \t]*#[ \t]*include[ \t]+"
+                                 "[\"<](([^ \">]+/)?ui_[^ \">/]+\\.h)[\">]");
 }
 
 bool cmQtAutoGenerators::Run(const std::string& targetDirectory,
                              const std::string& config)
 {
-  bool success = true;
-  cmake cm;
-  cmGlobalGenerator* gg = CreateGlobalGenerator(&cm, targetDirectory);
-  cmMakefile* makefile = gg->GetCurrentLocalGenerator()->GetMakefile();
+  cmake cm(cmake::RoleScript);
+  cm.SetHomeOutputDirectory(targetDirectory);
+  cm.SetHomeDirectory(targetDirectory);
+  cm.GetCurrentSnapshot().SetDefaultDefinitions();
+  cmGlobalGenerator gg(&cm);
 
-  this->ReadAutogenInfoFile(makefile, targetDirectory, config);
-  this->ReadOldMocDefinitionsFile(makefile, targetDirectory);
+  cmStateSnapshot snapshot = cm.GetCurrentSnapshot();
+  snapshot.GetDirectory().SetCurrentBinary(targetDirectory);
+  snapshot.GetDirectory().SetCurrentSource(targetDirectory);
 
-  this->Init();
+  CM_AUTO_PTR<cmMakefile> mf(new cmMakefile(&gg, snapshot));
+  gg.SetCurrentMakefile(mf.get());
 
-  if (this->QtMajorVersion == "4" || this->QtMajorVersion == "5")
-    {
-    success = this->RunAutogen(makefile);
+  bool success = false;
+  if (this->ReadAutogenInfoFile(mf.get(), targetDirectory, config)) {
+    // Read old settings
+    this->SettingsFileRead(mf.get());
+    // Init and run
+    this->Init(mf.get());
+    if (this->RunAutogen()) {
+      // Write current settings
+      if (this->SettingsFileWrite()) {
+        success = true;
+      }
     }
-
-  this->WriteOldMocDefinitionsFile(targetDirectory);
-
-  delete gg->GetCurrentLocalGenerator();
-  delete gg;
-  gg = NULL;
-  makefile = NULL;
+  }
   return success;
 }
 
-bool cmQtAutoGenerators::ReadAutogenInfoFile(cmMakefile* makefile,
-                                      const std::string& targetDirectory,
-                                      const std::string& config)
+bool cmQtAutoGenerators::MocDependFilterPush(const std::string& key,
+                                             const std::string& regExp)
 {
-  std::string filename(
-      cmSystemTools::CollapseFullPath(targetDirectory));
+  bool success = false;
+  if (!key.empty()) {
+    if (!regExp.empty()) {
+      MocDependFilter filter;
+      filter.key = key;
+      if (filter.regExp.compile(regExp)) {
+        this->MocDependFilters.push_back(filter);
+        success = true;
+      } else {
+        this->LogError("AutoMoc: Error in AUTOMOC_DEPEND_FILTERS: Compiling "
+                       "regular expression failed.\nKey:  " +
+                       Quoted(key) + "\nExp.: " + Quoted(regExp));
+      }
+    } else {
+      this->LogError("AutoMoc: Error in AUTOMOC_DEPEND_FILTERS: Regular "
+                     "expression is empty");
+    }
+  } else {
+    this->LogError("AutoMoc: Error in AUTOMOC_DEPEND_FILTERS: Key is empty");
+  }
+  return success;
+}
+
+bool cmQtAutoGenerators::ReadAutogenInfoFile(
+  cmMakefile* makefile, const std::string& targetDirectory,
+  const std::string& config)
+{
+  std::string filename(cmSystemTools::CollapseFullPath(targetDirectory));
   cmSystemTools::ConvertToUnixSlashes(filename);
   filename += "/AutogenInfo.cmake";
 
-  if (!makefile->ReadListFile(0, filename.c_str()))
-    {
-    cmSystemTools::Error("Error processing file: ", filename.c_str());
+  if (!makefile->ReadListFile(filename.c_str())) {
+    this->LogError("AutoGen: Error processing file: " + filename);
     return false;
-    }
+  }
 
-  this->QtMajorVersion = makefile->GetSafeDefinition("AM_QT_VERSION_MAJOR");
-  if (this->QtMajorVersion == "")
-    {
-    this->QtMajorVersion = makefile->GetSafeDefinition(
-                                     "AM_Qt5Core_VERSION_MAJOR");
-    }
-  this->Sources = makefile->GetSafeDefinition("AM_SOURCES");
+  // - Old settings file
   {
-  std::string rccSources = makefile->GetSafeDefinition("AM_RCC_SOURCES");
-  cmSystemTools::ExpandListArgument(rccSources, this->RccSources);
+    this->SettingsFile = cmSystemTools::CollapseFullPath(targetDirectory);
+    cmSystemTools::ConvertToUnixSlashes(this->SettingsFile);
+    this->SettingsFile += "/AutogenOldSettings";
+    this->SettingsFile += this->ConfigSuffix;
+    this->SettingsFile += ".cmake";
   }
-  this->SkipMoc = makefile->GetSafeDefinition("AM_SKIP_MOC");
-  this->SkipUic = makefile->GetSafeDefinition("AM_SKIP_UIC");
-  this->Headers = makefile->GetSafeDefinition("AM_HEADERS");
-  this->IncludeProjectDirsBefore = makefile->IsOn(
-                                "AM_CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE");
-  this->Srcdir = makefile->GetSafeDefinition("AM_CMAKE_CURRENT_SOURCE_DIR");
-  this->Builddir = makefile->GetSafeDefinition("AM_CMAKE_CURRENT_BINARY_DIR");
-  this->MocExecutable = makefile->GetSafeDefinition("AM_QT_MOC_EXECUTABLE");
-  this->UicExecutable = makefile->GetSafeDefinition("AM_QT_UIC_EXECUTABLE");
-  this->RccExecutable = makefile->GetSafeDefinition("AM_QT_RCC_EXECUTABLE");
-  {
-  std::string compileDefsPropOrig = "AM_MOC_COMPILE_DEFINITIONS";
-  std::string compileDefsProp = compileDefsPropOrig;
-  if(!config.empty())
-    {
-    compileDefsProp += "_";
-    compileDefsProp += config;
-    }
-  const char *compileDefs = makefile->GetDefinition(compileDefsProp);
-  this->MocCompileDefinitionsStr = compileDefs ? compileDefs
-                  : makefile->GetSafeDefinition(compileDefsPropOrig);
-  }
-  {
-  std::string includesPropOrig = "AM_MOC_INCLUDES";
-  std::string includesProp = includesPropOrig;
-  if(!config.empty())
-    {
-    includesProp += "_";
-    includesProp += config;
-    }
-  const char *includes = makefile->GetDefinition(includesProp);
-  this->MocIncludesStr = includes ? includes
-                      : makefile->GetSafeDefinition(includesPropOrig);
-  }
-  this->MocOptionsStr = makefile->GetSafeDefinition("AM_MOC_OPTIONS");
-  this->ProjectBinaryDir = makefile->GetSafeDefinition("AM_CMAKE_BINARY_DIR");
-  this->ProjectSourceDir = makefile->GetSafeDefinition("AM_CMAKE_SOURCE_DIR");
-  this->TargetName = makefile->GetSafeDefinition("AM_TARGET_NAME");
-  this->OriginTargetName
-                      = makefile->GetSafeDefinition("AM_ORIGIN_TARGET_NAME");
 
-  {
-  const char *uicOptionsFiles
-                        = makefile->GetSafeDefinition("AM_UIC_OPTIONS_FILES");
-  std::string uicOptionsPropOrig = "AM_UIC_TARGET_OPTIONS";
-  std::string uicOptionsProp = uicOptionsPropOrig;
-  if(!config.empty())
-    {
-    uicOptionsProp += "_";
-    uicOptionsProp += config;
-    }
-  const char *uicTargetOptions
-                        = makefile->GetSafeDefinition(uicOptionsProp);
-  cmSystemTools::ExpandListArgument(
-      uicTargetOptions ? uicTargetOptions
-                    : makefile->GetSafeDefinition(uicOptionsPropOrig),
-    this->UicTargetOptions);
-  const char *uicOptionsOptions
-                      = makefile->GetSafeDefinition("AM_UIC_OPTIONS_OPTIONS");
-  std::vector<std::string> uicFilesVec;
-  cmSystemTools::ExpandListArgument(uicOptionsFiles, uicFilesVec);
-  std::vector<std::string> uicOptionsVec;
-  cmSystemTools::ExpandListArgument(uicOptionsOptions, uicOptionsVec);
-  if (uicFilesVec.size() != uicOptionsVec.size())
-    {
+  // -- Meta
+  InfoGetConfig(makefile, "AM_CONFIG_SUFFIX", config, this->ConfigSuffix);
+
+  // - Files and directories
+  InfoGet(makefile, "AM_CMAKE_SOURCE_DIR", this->ProjectSourceDir);
+  InfoGet(makefile, "AM_CMAKE_BINARY_DIR", this->ProjectBinaryDir);
+  InfoGet(makefile, "AM_CMAKE_CURRENT_SOURCE_DIR", this->CurrentSourceDir);
+  InfoGet(makefile, "AM_CMAKE_CURRENT_BINARY_DIR", this->CurrentBinaryDir);
+  InfoGet(makefile, "AM_CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE",
+          this->IncludeProjectDirsBefore);
+  InfoGet(makefile, "AM_BUILD_DIR", this->AutogenBuildDir);
+  if (this->AutogenBuildDir.empty()) {
+    this->LogError("AutoGen: Error: Missing autogen build directory ");
     return false;
-    }
-  for (std::vector<std::string>::iterator fileIt = uicFilesVec.begin(),
-                                            optionIt = uicOptionsVec.begin();
-                                            fileIt != uicFilesVec.end();
-                                            ++fileIt, ++optionIt)
-    {
-    cmSystemTools::ReplaceString(*optionIt, "@list_sep@", ";");
-    this->UicOptions[*fileIt] = *optionIt;
-    }
   }
-  {
-  const char *rccOptionsFiles
-                        = makefile->GetSafeDefinition("AM_RCC_OPTIONS_FILES");
-  const char *rccOptionsOptions
-                      = makefile->GetSafeDefinition("AM_RCC_OPTIONS_OPTIONS");
-  std::vector<std::string> rccFilesVec;
-  cmSystemTools::ExpandListArgument(rccOptionsFiles, rccFilesVec);
-  std::vector<std::string> rccOptionsVec;
-  cmSystemTools::ExpandListArgument(rccOptionsOptions, rccOptionsVec);
-  if (rccFilesVec.size() != rccOptionsVec.size())
-    {
-    return false;
-    }
-  for (std::vector<std::string>::iterator fileIt = rccFilesVec.begin(),
-                                            optionIt = rccOptionsVec.begin();
-                                            fileIt != rccFilesVec.end();
-                                            ++fileIt, ++optionIt)
-    {
-    cmSystemTools::ReplaceString(*optionIt, "@list_sep@", ";");
-    this->RccOptions[*fileIt] = *optionIt;
-    }
+  InfoGet(makefile, "AM_SOURCES", this->Sources);
+  InfoGet(makefile, "AM_HEADERS", this->Headers);
 
-  const char *rccInputs = makefile->GetSafeDefinition("AM_RCC_INPUTS");
-  std::vector<std::string> rccInputLists;
-  cmSystemTools::ExpandListArgument(rccInputs, rccInputLists);
-
-  if (this->RccSources.size() != rccInputLists.size())
-    {
-    cmSystemTools::Error("Error processing file: ", filename.c_str());
-    return false;
-    }
-
-  for (std::vector<std::string>::iterator fileIt = this->RccSources.begin(),
-                                            inputIt = rccInputLists.begin();
-                                            fileIt != this->RccSources.end();
-                                            ++fileIt, ++inputIt)
-    {
-    cmSystemTools::ReplaceString(*inputIt, "@list_sep@", ";");
-    std::vector<std::string> rccInputFiles;
-    cmSystemTools::ExpandListArgument(*inputIt, rccInputFiles);
-
-    this->RccInputs[*fileIt] = rccInputFiles;
-    }
+  // - Qt environment
+  InfoGet(makefile, "AM_QT_VERSION_MAJOR", this->QtMajorVersion);
+  if (this->QtMajorVersion.empty()) {
+    InfoGet(makefile, "AM_Qt5Core_VERSION_MAJOR", this->QtMajorVersion);
   }
-  this->CurrentCompileSettingsStr = this->MakeCompileSettingsString(makefile);
+  InfoGet(makefile, "AM_QT_MOC_EXECUTABLE", this->MocExecutable);
+  InfoGet(makefile, "AM_QT_UIC_EXECUTABLE", this->UicExecutable);
+  InfoGet(makefile, "AM_QT_RCC_EXECUTABLE", this->RccExecutable);
 
-  this->RelaxedMode = makefile->IsOn("AM_RELAXED_MODE");
+  InfoGet(makefile, "AM_MOC_PREDEFS_CMD", this->MocPredefsCmd);
+  // Check Qt version
+  if ((this->QtMajorVersion != "4") && (this->QtMajorVersion != "5")) {
+    this->LogError("AutoGen: Error: Unsupported Qt version: " +
+                   Quoted(this->QtMajorVersion));
+    return false;
+  }
 
-  return true;
-}
-
-
-std::string cmQtAutoGenerators::MakeCompileSettingsString(cmMakefile* makefile)
-{
-  std::string s;
-  s += makefile->GetSafeDefinition("AM_MOC_COMPILE_DEFINITIONS");
-  s += " ~~~ ";
-  s += makefile->GetSafeDefinition("AM_MOC_INCLUDES");
-  s += " ~~~ ";
-  s += makefile->GetSafeDefinition("AM_MOC_OPTIONS");
-  s += " ~~~ ";
-  s += makefile->IsOn("AM_CMAKE_INCLUDE_DIRECTORIES_PROJECT_BEFORE") ? "TRUE"
-                                                                     : "FALSE";
-  s += " ~~~ ";
-
-  return s;
-}
-
-
-bool cmQtAutoGenerators::ReadOldMocDefinitionsFile(cmMakefile* makefile,
-                                            const std::string& targetDirectory)
-{
-  std::string filename(
-      cmSystemTools::CollapseFullPath(targetDirectory));
-  cmSystemTools::ConvertToUnixSlashes(filename);
-  filename += "/AutomocOldMocDefinitions.cmake";
-
-  if (makefile->ReadListFile(0, filename.c_str()))
+  // - Moc
+  if (this->MocEnabled()) {
+    InfoGet(makefile, "AM_MOC_SKIP", this->MocSkipList);
+    InfoGetConfig(makefile, "AM_MOC_DEFINITIONS", config,
+                  this->MocDefinitions);
+#ifdef _WIN32
     {
-    this->OldCompileSettingsStr =
-                        makefile->GetSafeDefinition("AM_OLD_COMPILE_SETTINGS");
-    }
-  return true;
-}
-
-
-void
-cmQtAutoGenerators::WriteOldMocDefinitionsFile(
-                                            const std::string& targetDirectory)
-{
-  std::string filename(
-      cmSystemTools::CollapseFullPath(targetDirectory));
-  cmSystemTools::ConvertToUnixSlashes(filename);
-  filename += "/AutomocOldMocDefinitions.cmake";
-
-  cmsys::ofstream outfile;
-  outfile.open(filename.c_str(),
-               std::ios::trunc);
-  outfile << "set(AM_OLD_COMPILE_SETTINGS "
-              << cmLocalGenerator::EscapeForCMake(
-                 this->CurrentCompileSettingsStr) << ")\n";
-
-  outfile.close();
-}
-
-
-void cmQtAutoGenerators::Init()
-{
-  this->OutMocCppFilename = this->Builddir;
-  this->OutMocCppFilename += this->TargetName;
-  this->OutMocCppFilename += ".cpp";
-
-  std::vector<std::string> cdefList;
-  cmSystemTools::ExpandListArgument(this->MocCompileDefinitionsStr, cdefList);
-  for(std::vector<std::string>::const_iterator it = cdefList.begin();
-      it != cdefList.end();
-      ++it)
-    {
-    this->MocDefinitions.push_back("-D" + (*it));
-    }
-
-  cmSystemTools::ExpandListArgument(this->MocOptionsStr, this->MocOptions);
-
-  std::vector<std::string> incPaths;
-  cmSystemTools::ExpandListArgument(this->MocIncludesStr, incPaths);
-
-  std::set<std::string> frameworkPaths;
-  for(std::vector<std::string>::const_iterator it = incPaths.begin();
-      it != incPaths.end();
-      ++it)
-    {
-    const std::string &path = *it;
-    this->MocIncludes.push_back("-I" + path);
-    if (cmHasLiteralSuffix(path, ".framework/Headers"))
-      {
-      // Go up twice to get to the framework root
-      std::vector<std::string> pathComponents;
-      cmsys::SystemTools::SplitPath(path, pathComponents);
-      std::string frameworkPath =cmsys::SystemTools::JoinPath(
-                             pathComponents.begin(), pathComponents.end() - 2);
-      frameworkPaths.insert(frameworkPath);
+      const std::string win32("WIN32");
+      if (!ListContains(this->MocDefinitions, win32)) {
+        this->MocDefinitions.push_back(win32);
       }
     }
-
-  for (std::set<std::string>::const_iterator it = frameworkPaths.begin();
-         it != frameworkPaths.end(); ++it)
+#endif
+    InfoGetConfig(makefile, "AM_MOC_INCLUDES", config, this->MocIncludePaths);
+    InfoGet(makefile, "AM_MOC_OPTIONS", this->MocOptions);
+    InfoGet(makefile, "AM_MOC_RELAXED_MODE", this->MocRelaxedMode);
     {
-    this->MocIncludes.push_back("-F");
-    this->MocIncludes.push_back(*it);
-    }
-
-
-    if (this->IncludeProjectDirsBefore)
-      {
-      const std::string binDir = "-I" + this->ProjectBinaryDir;
-
-      const std::string srcDir = "-I" + this->ProjectSourceDir;
-
-      std::list<std::string> sortedMocIncludes;
-      std::list<std::string>::iterator it = this->MocIncludes.begin();
-      while (it != this->MocIncludes.end())
-        {
-        if (this->StartsWith(*it, binDir))
-          {
-          sortedMocIncludes.push_back(*it);
-          it = this->MocIncludes.erase(it);
-          }
-        else
-          {
-          ++it;
+      std::vector<std::string> mocDependFilters;
+      InfoGet(makefile, "AM_MOC_DEPEND_FILTERS", mocDependFilters);
+      // Insert Q_PLUGIN_METADATA dependency filter
+      if (this->QtMajorVersion != "4") {
+        this->MocDependFilterPush("Q_PLUGIN_METADATA",
+                                  "[\n][ \t]*Q_PLUGIN_METADATA[ \t]*\\("
+                                  "[^\\)]*FILE[ \t]*\"([^\"]+)\"");
+      }
+      // Insert user defined dependency filters
+      if ((mocDependFilters.size() % 2) == 0) {
+        for (std::vector<std::string>::const_iterator dit =
+               mocDependFilters.begin();
+             dit != mocDependFilters.end(); dit += 2) {
+          if (!this->MocDependFilterPush(*dit, *(dit + 1))) {
+            return false;
           }
         }
-      it = this->MocIncludes.begin();
-      while (it != this->MocIncludes.end())
-        {
-        if (this->StartsWith(*it, srcDir))
-          {
-          sortedMocIncludes.push_back(*it);
-          it = this->MocIncludes.erase(it);
-          }
-        else
-          {
-          ++it;
-          }
-        }
-      sortedMocIncludes.insert(sortedMocIncludes.end(),
-                           this->MocIncludes.begin(), this->MocIncludes.end());
-      this->MocIncludes = sortedMocIncludes;
+      } else {
+        this->LogError(
+          "AutoMoc: Error: AUTOMOC_DEPEND_FILTERS list size is not "
+          "a multiple of 2 in:\n" +
+          Quoted(filename));
+        return false;
+      }
     }
+  }
 
+  // - Uic
+  if (this->UicEnabled()) {
+    InfoGet(makefile, "AM_UIC_SKIP", this->UicSkipList);
+    InfoGet(makefile, "AM_UIC_SEARCH_PATHS", this->UicSearchPaths);
+    InfoGetConfig(makefile, "AM_UIC_TARGET_OPTIONS", config,
+                  this->UicTargetOptions);
+    {
+      std::vector<std::string> uicFilesVec;
+      std::vector<std::string> uicOptionsVec;
+      InfoGet(makefile, "AM_UIC_OPTIONS_FILES", uicFilesVec);
+      InfoGet(makefile, "AM_UIC_OPTIONS_OPTIONS", uicOptionsVec);
+      // Compare list sizes
+      if (uicFilesVec.size() == uicOptionsVec.size()) {
+        for (std::vector<std::string>::iterator
+               fileIt = uicFilesVec.begin(),
+               optionIt = uicOptionsVec.begin();
+             fileIt != uicFilesVec.end(); ++fileIt, ++optionIt) {
+          cmSystemTools::ReplaceString(*optionIt,
+                                       cmQtAutoGeneratorCommon::listSep, ";");
+          this->UicOptions[*fileIt] = *optionIt;
+        }
+      } else {
+        this->LogError(
+          "AutoGen: Error: Uic files/options lists size missmatch in:\n" +
+          Quoted(filename));
+        return false;
+      }
+    }
+  }
+
+  // - Rcc
+  if (this->RccEnabled()) {
+    InfoGet(makefile, "AM_RCC_SOURCES", this->RccSources);
+    // File options
+    {
+      std::vector<std::string> rccFilesVec;
+      std::vector<std::string> rccOptionsVec;
+      InfoGet(makefile, "AM_RCC_OPTIONS_FILES", rccFilesVec);
+      InfoGet(makefile, "AM_RCC_OPTIONS_OPTIONS", rccOptionsVec);
+      if (rccFilesVec.size() == rccOptionsVec.size()) {
+        for (std::vector<std::string>::iterator
+               fileIt = rccFilesVec.begin(),
+               optionIt = rccOptionsVec.begin();
+             fileIt != rccFilesVec.end(); ++fileIt, ++optionIt) {
+          // Replace item separator
+          cmSystemTools::ReplaceString(*optionIt,
+                                       cmQtAutoGeneratorCommon::listSep, ";");
+          this->RccOptions[*fileIt] = *optionIt;
+        }
+      } else {
+        this->LogError(
+          "AutoGen: Error: RCC files/options lists size missmatch in:\n" +
+          Quoted(filename));
+        return false;
+      }
+    }
+    // File lists
+    {
+      std::vector<std::string> rccInputLists;
+      InfoGet(makefile, "AM_RCC_INPUTS", rccInputLists);
+      if (this->RccSources.size() == rccInputLists.size()) {
+        for (std::vector<std::string>::iterator
+               fileIt = this->RccSources.begin(),
+               inputIt = rccInputLists.begin();
+             fileIt != this->RccSources.end(); ++fileIt, ++inputIt) {
+          // Remove braces
+          *inputIt = inputIt->substr(1, inputIt->size() - 2);
+          // Replace item separator
+          cmSystemTools::ReplaceString(*inputIt,
+                                       cmQtAutoGeneratorCommon::listSep, ";");
+          std::vector<std::string> rccInputFiles;
+          cmSystemTools::ExpandListArgument(*inputIt, rccInputFiles);
+          this->RccInputs[*fileIt] = rccInputFiles;
+        }
+      } else {
+        this->LogError(
+          "AutoGen: Error: RCC sources/inputs lists size missmatch in:\n" +
+          Quoted(filename));
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
-
-bool cmQtAutoGenerators::RunAutogen(cmMakefile* makefile)
+void cmQtAutoGenerators::SettingsFileRead(cmMakefile* makefile)
 {
-  if (!cmsys::SystemTools::FileExists(this->OutMocCppFilename.c_str())
-    || (this->OldCompileSettingsStr != this->CurrentCompileSettingsStr))
-    {
-    this->GenerateAll = true;
+  // Compose current settings strings
+  {
+    cmCryptoHash crypt(cmCryptoHash::AlgoSHA256);
+    const std::string sep(" ~~~ ");
+    if (this->MocEnabled()) {
+      std::string str;
+      str += this->MocExecutable;
+      str += sep;
+      str += JoinOptionsList(this->MocDefinitions);
+      str += sep;
+      str += JoinOptionsList(this->MocIncludePaths);
+      str += sep;
+      str += JoinOptionsList(this->MocOptions);
+      str += sep;
+      str += this->IncludeProjectDirsBefore ? "TRUE" : "FALSE";
+      str += sep;
+      str += JoinOptionsList(this->MocPredefsCmd);
+      str += sep;
+      this->SettingsStringMoc = crypt.HashString(str);
     }
+    if (this->UicEnabled()) {
+      std::string str;
+      str += this->UicExecutable;
+      str += sep;
+      str += JoinOptionsList(this->UicTargetOptions);
+      str += sep;
+      str += JoinOptionsMap(this->UicOptions);
+      str += sep;
+      this->SettingsStringUic = crypt.HashString(str);
+    }
+    if (this->RccEnabled()) {
+      std::string str;
+      str += this->RccExecutable;
+      str += sep;
+      str += JoinOptionsMap(this->RccOptions);
+      str += sep;
+      this->SettingsStringRcc = crypt.HashString(str);
+    }
+  }
 
+  // Read old settings
+  if (makefile->ReadListFile(this->SettingsFile.c_str())) {
+    if (!SettingsMatch(makefile, SettingsKeyMoc, this->SettingsStringMoc)) {
+      this->MocSettingsChanged = true;
+    }
+    if (!SettingsMatch(makefile, SettingsKeyUic, this->SettingsStringUic)) {
+      this->UicSettingsChanged = true;
+    }
+    if (!SettingsMatch(makefile, SettingsKeyRcc, this->SettingsStringRcc)) {
+      this->RccSettingsChanged = true;
+    }
+    // In case any setting changed remove the old settings file.
+    // This triggers a full rebuild on the next run if the current
+    // build is aborted before writing the current settings in the end.
+    if (this->AnySettingsChanged()) {
+      cmSystemTools::RemoveFile(this->SettingsFile);
+    }
+  } else {
+    // If the file could not be read re-generate everythiung.
+    this->MocSettingsChanged = true;
+    this->UicSettingsChanged = true;
+    this->RccSettingsChanged = true;
+  }
+}
+
+bool cmQtAutoGenerators::SettingsFileWrite()
+{
+  bool success = true;
+  // Only write if any setting changed
+  if (this->AnySettingsChanged()) {
+    if (this->Verbose) {
+      this->LogInfo("AutoGen: Writing settings file " +
+                    Quoted(this->SettingsFile));
+    }
+    // Compose settings file content
+    std::string settings;
+    SettingAppend(settings, SettingsKeyMoc, this->SettingsStringMoc);
+    SettingAppend(settings, SettingsKeyUic, this->SettingsStringUic);
+    SettingAppend(settings, SettingsKeyRcc, this->SettingsStringRcc);
+    // Write settings file
+    if (!this->FileWrite("AutoGen", this->SettingsFile, settings)) {
+      this->LogError("AutoGen: Error: Could not write old settings file " +
+                     Quoted(this->SettingsFile));
+      // Remove old settings file to trigger a full rebuild on the next run
+      cmSystemTools::RemoveFile(this->SettingsFile);
+      success = false;
+    }
+  }
+  return success;
+}
+
+void cmQtAutoGenerators::Init(cmMakefile* makefile)
+{
+  // Mocs compilation file
+  this->MocCompFileRel = "mocs_compilation";
+  this->MocCompFileRel += this->ConfigSuffix;
+  this->MocCompFileRel += ".cpp";
+  this->MocCompFileAbs = cmSystemTools::CollapseCombinedPath(
+    this->AutogenBuildDir, this->MocCompFileRel);
+
+  // Mocs include directory
+  this->AutogenIncludeDir = "include";
+  this->AutogenIncludeDir += this->ConfigSuffix;
+  this->AutogenIncludeDir += "/";
+
+  // Moc predefs file
+  if (!this->MocPredefsCmd.empty()) {
+    this->MocPredefsFileRel = "moc_predefs.h";
+    this->MocPredefsFileAbs = cmSystemTools::CollapseCombinedPath(
+      this->AutogenBuildDir, this->MocPredefsFileRel);
+  }
+
+  // Init file path checksum generator
+  FPathChecksum.setupParentDirs(this->CurrentSourceDir, this->CurrentBinaryDir,
+                                this->ProjectSourceDir,
+                                this->ProjectBinaryDir);
+
+  // Acquire header extensions
+  this->HeaderExtensions = makefile->GetCMakeInstance()->GetHeaderExtensions();
+
+  // Sort include directories on demand
+  if (this->IncludeProjectDirsBefore) {
+    // Move strings to temporary list
+    std::list<std::string> includes;
+    includes.insert(includes.end(), this->MocIncludePaths.begin(),
+                    this->MocIncludePaths.end());
+    this->MocIncludePaths.clear();
+    this->MocIncludePaths.reserve(includes.size());
+    // Append project directories only
+    {
+      const char* movePaths[2] = { this->ProjectBinaryDir.c_str(),
+                                   this->ProjectSourceDir.c_str() };
+      for (const char* const* mpit = cmArrayBegin(movePaths);
+           mpit != cmArrayEnd(movePaths); ++mpit) {
+        std::list<std::string>::iterator it = includes.begin();
+        while (it != includes.end()) {
+          const std::string& path = *it;
+          if (cmsys::SystemTools::StringStartsWith(path, *mpit)) {
+            this->MocIncludePaths.push_back(path);
+            it = includes.erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
+    }
+    // Append remaining directories
+    this->MocIncludePaths.insert(this->MocIncludePaths.end(), includes.begin(),
+                                 includes.end());
+  }
+  // Compose moc includes list
+  {
+    std::set<std::string> frameworkPaths;
+    for (std::vector<std::string>::const_iterator it =
+           this->MocIncludePaths.begin();
+         it != this->MocIncludePaths.end(); ++it) {
+      const std::string& path = *it;
+      this->MocIncludes.push_back("-I" + path);
+      // Extract framework path
+      if (cmHasLiteralSuffix(path, ".framework/Headers")) {
+        // Go up twice to get to the framework root
+        std::vector<std::string> pathComponents;
+        cmsys::SystemTools::SplitPath(path, pathComponents);
+        std::string frameworkPath = cmsys::SystemTools::JoinPath(
+          pathComponents.begin(), pathComponents.end() - 2);
+        frameworkPaths.insert(frameworkPath);
+      }
+    }
+    // Append framework includes
+    for (std::set<std::string>::const_iterator it = frameworkPaths.begin();
+         it != frameworkPaths.end(); ++it) {
+      this->MocIncludes.push_back("-F");
+      this->MocIncludes.push_back(*it);
+    }
+  }
+}
+
+bool cmQtAutoGenerators::RunAutogen()
+{
   // the program goes through all .cpp files to see which moc files are
   // included. It is not really interesting how the moc file is named, but
   // what file the moc is created from. Once a moc is included the same moc
-  // may not be included in the _automoc.cpp file anymore. OTOH if there's a
-  // header containing Q_OBJECT where no corresponding moc file is included
-  // anywhere a moc_<filename>.cpp file is created and included in
-  // the _automoc.cpp file.
+  // may not be included in the mocs_compilation_$<CONFIG>.cpp file anymore.
+  // OTOH if there's a header containing Q_OBJECT where no corresponding
+  // moc file is included anywhere a moc_<filename>.cpp file is created and
+  // included in the mocs_compilation_$<CONFIG>.cpp file.
+
+  // Create AUTOGEN include directory
+  {
+    const std::string incDirAbs = cmSystemTools::CollapseCombinedPath(
+      this->AutogenBuildDir, this->AutogenIncludeDir);
+    if (!cmsys::SystemTools::MakeDirectory(incDirAbs)) {
+      this->LogError("AutoGen: Error: Could not create include directory " +
+                     Quoted(incDirAbs));
+      return false;
+    }
+  }
 
   // key = moc source filepath, value = moc output filepath
-  std::map<std::string, std::string> includedMocs;
-  // collect all headers which may need to be mocced
-  std::set<std::string> headerFiles;
+  std::map<std::string, std::string> mocsIncluded;
+  std::map<std::string, std::string> mocsNotIncluded;
+  std::map<std::string, std::set<std::string> > mocDepends;
+  std::map<std::string, std::vector<std::string> > uisIncluded;
+  // collects all headers which may need to be mocced
+  std::set<std::string> mocHeaderFiles;
+  std::set<std::string> uicHeaderFiles;
 
-  std::vector<std::string> sourceFiles;
-  cmSystemTools::ExpandListArgument(this->Sources, sourceFiles);
-
-  const std::vector<std::string>& headerExtensions =
-                                               makefile->GetHeaderExtensions();
-
-  std::map<std::string, std::vector<std::string> > includedUis;
-  std::map<std::string, std::vector<std::string> > skippedUis;
-  std::vector<std::string> uicSkipped;
-  cmSystemTools::ExpandListArgument(this->SkipUic, uicSkipped);
-
-  for (std::vector<std::string>::const_iterator it = sourceFiles.begin();
-       it != sourceFiles.end();
-       ++it)
-    {
-    const bool skipUic = std::find(uicSkipped.begin(), uicSkipped.end(), *it)
-        != uicSkipped.end();
-    std::map<std::string, std::vector<std::string> >& uiFiles
-                                          = skipUic ? skippedUis : includedUis;
-    const std::string &absFilename = *it;
-    if (this->Verbose)
-      {
-      std::cout << "AUTOGEN: Checking " << absFilename << std::endl;
-      }
-    if (this->RelaxedMode)
-      {
-      this->ParseCppFile(absFilename, headerExtensions, includedMocs,
-                         uiFiles);
-      }
-    else
-      {
-      this->StrictParseCppFile(absFilename, headerExtensions, includedMocs,
-                               uiFiles);
-      }
-    this->SearchHeadersForCppFile(absFilename, headerExtensions, headerFiles);
+  // Parse sources
+  for (std::vector<std::string>::const_iterator it = this->Sources.begin();
+       it != this->Sources.end(); ++it) {
+    const std::string& absFilename = cmsys::SystemTools::GetRealPath(*it);
+    // Parse source file for MOC/UIC
+    if (!this->ParseSourceFile(absFilename, mocsIncluded, mocDepends,
+                               uisIncluded, this->MocRelaxedMode)) {
+      return false;
     }
+    // Find additional headers
+    this->SearchHeadersForSourceFile(absFilename, mocHeaderFiles,
+                                     uicHeaderFiles);
+  }
 
-  {
-  std::vector<std::string> mocSkipped;
-  cmSystemTools::ExpandListArgument(this->SkipMoc, mocSkipped);
-  for (std::vector<std::string>::const_iterator it = mocSkipped.begin();
-       it != mocSkipped.end();
-       ++it)
-    {
-    if (std::find(uicSkipped.begin(), uicSkipped.end(), *it)
-        != uicSkipped.end())
-      {
-      const std::string &absFilename = *it;
-      if (this->Verbose)
-        {
-        std::cout << "AUTOGEN: Checking " << absFilename << std::endl;
+  // Parse headers
+  for (std::vector<std::string>::const_iterator it = this->Headers.begin();
+       it != this->Headers.end(); ++it) {
+    const std::string& headerName = cmsys::SystemTools::GetRealPath(*it);
+    if (!this->MocSkip(headerName)) {
+      mocHeaderFiles.insert(headerName);
+    }
+    if (!this->UicSkip(headerName)) {
+      uicHeaderFiles.insert(headerName);
+    }
+  }
+  if (!this->ParseHeaders(mocHeaderFiles, uicHeaderFiles, mocsIncluded,
+                          mocsNotIncluded, mocDepends, uisIncluded)) {
+    return false;
+  };
+
+  // Generate files
+  if (!this->MocGenerateAll(mocsIncluded, mocsNotIncluded, mocDepends)) {
+    return false;
+  }
+  if (!this->UicGenerateAll(uisIncluded)) {
+    return false;
+  }
+  if (!this->RccGenerateAll()) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * @brief Tests if the C++ content requires moc processing
+ * @return True if moc is required
+ */
+bool cmQtAutoGenerators::MocRequired(const std::string& contentText,
+                                     std::string* macroName)
+{
+  for (unsigned int ii = 0; ii != cmArraySize(this->MocMacroFilters); ++ii) {
+    MocMacroFilter& filter = this->MocMacroFilters[ii];
+    // Run a simple find string operation before the expensive
+    // regular expression check
+    if (contentText.find(filter.first) != std::string::npos) {
+      if (filter.second.find(contentText)) {
+        // Return macro name on demand
+        if (macroName != CM_NULLPTR) {
+          *macroName = filter.first;
         }
-      this->ParseForUic(absFilename, includedUis);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void cmQtAutoGenerators::MocFindDepends(
+  const std::string& absFilename, const std::string& contentText,
+  std::map<std::string, std::set<std::string> >& mocDepends)
+{
+  for (std::vector<MocDependFilter>::iterator fit =
+         this->MocDependFilters.begin();
+       fit != this->MocDependFilters.end(); ++fit) {
+    MocDependFilter& filter = *fit;
+    // Run a simple find string operation before the expensive
+    // regular expression check
+    if (contentText.find(filter.key) != std::string::npos) {
+      // Run regular expression check loop
+      const std::string sourcePath = SubDirPrefix(absFilename);
+      const char* contentChars = contentText.c_str();
+      while (filter.regExp.find(contentChars)) {
+        // Evaluate match
+        const std::string match = filter.regExp.match(1);
+        if (!match.empty()) {
+          // Find the dependency file
+          std::string incFile;
+          if (this->MocFindIncludedFile(incFile, sourcePath, match)) {
+            mocDepends[absFilename].insert(incFile);
+            if (this->Verbose) {
+              this->LogInfo("AutoMoc: Found dependency:\n  " +
+                            Quoted(absFilename) + "\n  " + Quoted(incFile));
+            }
+          } else {
+            this->LogWarning("AutoMoc: Warning: " + Quoted(absFilename) +
+                             "\n" + "Could not find dependency file " +
+                             Quoted(match));
+          }
+        }
+        contentChars += filter.regExp.end();
+      }
+    }
+  }
+}
+
+/**
+ * @brief Tests if the file should be ignored for moc scanning
+ * @return True if the file should be ignored
+ */
+bool cmQtAutoGenerators::MocSkip(const std::string& absFilename) const
+{
+  if (this->MocEnabled()) {
+    // Test if the file name is on the skip list
+    if (!ListContains(this->MocSkipList, absFilename)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * @brief Tests if the file name is in the skip list
+ */
+bool cmQtAutoGenerators::UicSkip(const std::string& absFilename) const
+{
+  if (this->UicEnabled()) {
+    // Test if the file name is on the skip list
+    if (!ListContains(this->UicSkipList, absFilename)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * @return True on success
+ */
+bool cmQtAutoGenerators::ParseSourceFile(
+  const std::string& absFilename,
+  std::map<std::string, std::string>& mocsIncluded,
+  std::map<std::string, std::set<std::string> >& mocDepends,
+  std::map<std::string, std::vector<std::string> >& uisIncluded, bool relaxed)
+{
+  std::string contentText;
+  bool success = ReadAll(contentText, absFilename);
+  if (success) {
+    if (!contentText.empty()) {
+      // Parse source contents for MOC
+      if (success && !this->MocSkip(absFilename)) {
+        success = this->MocParseSourceContent(
+          absFilename, contentText, mocsIncluded, mocDepends, relaxed);
+      }
+      // Parse source contents for UIC
+      if (success && !this->UicSkip(absFilename)) {
+        this->UicParseContent(absFilename, contentText, uisIncluded);
+      }
+    } else {
+      std::ostringstream ost;
+      ost << "AutoGen: Warning: The file is empty:\n"
+          << Quoted(absFilename) << "\n";
+      this->LogWarning(ost.str());
+    }
+  } else {
+    std::ostringstream ost;
+    ost << "AutoGen: Error: Could not read file:\n" << Quoted(absFilename);
+    this->LogError(ost.str());
+  }
+  return success;
+}
+
+void cmQtAutoGenerators::UicParseContent(
+  const std::string& absFilename, const std::string& contentText,
+  std::map<std::string, std::vector<std::string> >& uisIncluded)
+{
+  if (this->Verbose) {
+    this->LogInfo("AutoUic: Checking " + absFilename);
+  }
+
+  const char* contentChars = contentText.c_str();
+  if (strstr(contentChars, "ui_") != CM_NULLPTR) {
+    while (this->UicRegExpInclude.find(contentChars)) {
+      uisIncluded[absFilename].push_back(this->UicRegExpInclude.match(1));
+      contentChars += this->UicRegExpInclude.end();
+    }
+  }
+}
+
+/**
+ * @return True on success
+ */
+bool cmQtAutoGenerators::MocParseSourceContent(
+  const std::string& absFilename, const std::string& contentText,
+  std::map<std::string, std::string>& mocsIncluded,
+  std::map<std::string, std::set<std::string> >& mocDepends, bool relaxed)
+{
+  if (this->Verbose) {
+    this->LogInfo("AutoMoc: Checking " + absFilename);
+  }
+
+  const std::string scannedFileAbsPath = SubDirPrefix(absFilename);
+  const std::string scannedFileBasename =
+    cmsys::SystemTools::GetFilenameWithoutLastExtension(absFilename);
+
+  std::string macroName;
+  const bool requiresMoc = this->MocRequired(contentText, &macroName);
+  bool ownDotMocIncluded = false;
+  std::string ownMocUnderscoreInclude;
+  std::string ownMocUnderscoreHeader;
+
+  // first a simple string check for "moc" is *much* faster than the regexp,
+  // and if the string search already fails, we don't have to try the
+  // expensive regexp
+  const char* contentChars = contentText.c_str();
+  if (strstr(contentChars, "moc") != CM_NULLPTR) {
+    // Iterate over all included moc files
+    while (this->MocRegExpInclude.find(contentChars)) {
+      const std::string incString = this->MocRegExpInclude.match(1);
+      // Basename of the moc include
+      const std::string incSubDir(SubDirPrefix(incString));
+      const std::string incBasename =
+        cmsys::SystemTools::GetFilenameWithoutLastExtension(incString);
+
+      // If the moc include is of the moc_foo.cpp style we expect
+      // the Q_OBJECT class declaration in a header file.
+      // If the moc include is of the foo.moc style we need to look for
+      // a Q_OBJECT macro in the current source file, if it contains the
+      // macro we generate the moc file from the source file.
+      if (cmHasLiteralPrefix(incBasename, "moc_")) {
+        // Include: moc_FOO.cxx
+        // Remove the moc_ part
+        const std::string incRealBasename = incBasename.substr(4);
+        const std::string headerToMoc =
+          this->MocFindHeader(scannedFileAbsPath, incSubDir + incRealBasename);
+        if (!headerToMoc.empty()) {
+          if (!this->MocSkip(headerToMoc)) {
+            // Register moc job
+            mocsIncluded[headerToMoc] = incString;
+            this->MocFindDepends(headerToMoc, contentText, mocDepends);
+            // Store meta information for relaxed mode
+            if (relaxed && (incRealBasename == scannedFileBasename)) {
+              ownMocUnderscoreInclude = incString;
+              ownMocUnderscoreHeader = headerToMoc;
+            }
+          }
+        } else {
+          std::ostringstream ost;
+          ost << "AutoMoc: Error: " << Quoted(absFilename) << "\n"
+              << "The file includes the moc file " << Quoted(incString)
+              << ", but could not find header "
+              << Quoted(incRealBasename + "{" +
+                        JoinExts(this->HeaderExtensions) + "}");
+          ;
+          this->LogError(ost.str());
+          return false;
+        }
+      } else {
+        // Include: FOO.moc
+        std::string fileToMoc;
+        if (relaxed) {
+          // Mode: Relaxed
+          if (requiresMoc && (incBasename == scannedFileBasename)) {
+            // Include self
+            fileToMoc = absFilename;
+            ownDotMocIncluded = true;
+          } else {
+            // In relaxed mode try to find a header instead but issue a warning
+            const std::string headerToMoc =
+              this->MocFindHeader(scannedFileAbsPath, incSubDir + incBasename);
+            if (!headerToMoc.empty()) {
+              if (!this->MocSkip(headerToMoc)) {
+                // This is for KDE4 compatibility:
+                fileToMoc = headerToMoc;
+                if (!requiresMoc && (incBasename == scannedFileBasename)) {
+                  std::ostringstream ost;
+                  ost
+                    << "AutoMoc: Warning: " << Quoted(absFilename) << "\n"
+                    << "The file includes the moc file " << Quoted(incString)
+                    << ", but does not contain a Q_OBJECT or Q_GADGET macro.\n"
+                    << "Running moc on " << Quoted(headerToMoc) << "!\n"
+                    << "Include " << Quoted("moc_" + incBasename + ".cpp")
+                    << " for a compatibility with strict mode (see "
+                       "CMAKE_AUTOMOC_RELAXED_MODE).\n";
+                  this->LogWarning(ost.str());
+                } else {
+                  std::ostringstream ost;
+                  ost << "AutoMoc: Warning: " << Quoted(absFilename) << "\n"
+                      << "The file includes the moc file " << Quoted(incString)
+                      << " instead of "
+                      << Quoted("moc_" + incBasename + ".cpp") << ".\n"
+                      << "Running moc on " << Quoted(headerToMoc) << "!\n"
+                      << "Include " << Quoted("moc_" + incBasename + ".cpp")
+                      << " for compatibility with strict mode (see "
+                         "CMAKE_AUTOMOC_RELAXED_MODE).\n";
+                  this->LogWarning(ost.str());
+                }
+              }
+            } else {
+              std::ostringstream ost;
+              ost << "AutoMoc: Error: " << Quoted(absFilename) << "\n"
+                  << "The file includes the moc file " << Quoted(incString)
+                  << ", which seems to be the moc file from a different "
+                     "source file. CMake also could not find a matching "
+                     "header.";
+              this->LogError(ost.str());
+              return false;
+            }
+          }
+        } else {
+          // Mode: Strict
+          if (incBasename == scannedFileBasename) {
+            // Include self
+            fileToMoc = absFilename;
+            ownDotMocIncluded = true;
+            // Accept but issue a warning if moc isn't required
+            if (!requiresMoc) {
+              std::ostringstream ost;
+              ost << "AutoMoc: Warning: " << Quoted(absFilename) << "\n"
+                  << "The file includes the moc file " << Quoted(incString)
+                  << ", but does not contain a Q_OBJECT or Q_GADGET "
+                     "macro.";
+              this->LogWarning(ost.str());
+            }
+          } else {
+            // Don't allow FOO.moc include other than self in strict mode
+            std::ostringstream ost;
+            ost << "AutoMoc: Error: " << Quoted(absFilename) << "\n"
+                << "The file includes the moc file " << Quoted(incString)
+                << ", which seems to be the moc file from a different "
+                   "source file. This is not supported. Include "
+                << Quoted(scannedFileBasename + ".moc")
+                << " to run moc on this source file.";
+            this->LogError(ost.str());
+            return false;
+          }
+        }
+        if (!fileToMoc.empty()) {
+          mocsIncluded[fileToMoc] = incString;
+          this->MocFindDepends(fileToMoc, contentText, mocDepends);
+        }
+      }
+      // Forward content pointer
+      contentChars += this->MocRegExpInclude.end();
+    }
+  }
+
+  if (requiresMoc && !ownDotMocIncluded) {
+    // In this case, check whether the scanned file itself contains a Q_OBJECT.
+    // If this is the case, the moc_foo.cpp should probably be generated from
+    // foo.cpp instead of foo.h, because otherwise it won't build.
+    // But warn, since this is not how it is supposed to be used.
+    if (relaxed && !ownMocUnderscoreInclude.empty()) {
+      // This is for KDE4 compatibility:
+      std::ostringstream ost;
+      ost << "AutoMoc: Warning: " << Quoted(absFilename) << "\n"
+          << "The file contains a " << macroName
+          << " macro, but does not include "
+          << Quoted(scannedFileBasename + ".moc") << ", but instead includes "
+          << Quoted(ownMocUnderscoreInclude) << ".\n"
+          << "Running moc on " << Quoted(absFilename) << "!\n"
+          << "Better include " << Quoted(scannedFileBasename + ".moc")
+          << " for compatibility with strict mode (see "
+             "CMAKE_AUTOMOC_RELAXED_MODE).";
+      this->LogWarning(ost.str());
+
+      // Use scanned source file instead of scanned header file as moc source
+      mocsIncluded[absFilename] = ownMocUnderscoreInclude;
+      this->MocFindDepends(absFilename, contentText, mocDepends);
+      // Remove
+      mocsIncluded.erase(ownMocUnderscoreHeader);
+    } else {
+      // Otherwise always error out since it will not compile:
+      std::ostringstream ost;
+      ost << "AutoMoc: Error: " << Quoted(absFilename) << "\n"
+          << "The file contains a " << macroName
+          << " macro, but does not include "
+          << Quoted(scannedFileBasename + ".moc") << "!\n"
+          << "Consider adding the include or enabling SKIP_AUTOMOC for this "
+             "file.";
+      this->LogError(ost.str());
+      return false;
+    }
+  }
+
+  return true;
+}
+
+void cmQtAutoGenerators::MocParseHeaderContent(
+  const std::string& absFilename, const std::string& contentText,
+  std::map<std::string, std::string>& mocsNotIncluded,
+  std::map<std::string, std::set<std::string> >& mocDepends)
+{
+  // Log
+  if (this->Verbose) {
+    this->LogInfo("AutoMoc: Checking " + absFilename);
+  }
+  if (this->MocRequired(contentText)) {
+    // Register moc job
+    mocsNotIncluded[absFilename] =
+      this->ChecksumedPath(absFilename, "moc_", this->ConfigSuffix + ".cpp");
+    this->MocFindDepends(absFilename, contentText, mocDepends);
+  }
+}
+
+void cmQtAutoGenerators::SearchHeadersForSourceFile(
+  const std::string& absFilename, std::set<std::string>& mocHeaderFiles,
+  std::set<std::string>& uicHeaderFiles) const
+{
+  std::string basepaths[2];
+  {
+    std::string bpath = SubDirPrefix(absFilename);
+    bpath += cmsys::SystemTools::GetFilenameWithoutLastExtension(absFilename);
+    // search for default header files and private header files
+    basepaths[0] = bpath;
+    basepaths[1] = bpath + "_p";
+  }
+
+  for (const std::string* bpit = cmArrayBegin(basepaths);
+       bpit != cmArrayEnd(basepaths); ++bpit) {
+    std::string headerName;
+    if (this->FindHeader(headerName, *bpit)) {
+      // Moc headers
+      if (!this->MocSkip(absFilename) && !this->MocSkip(headerName)) {
+        mocHeaderFiles.insert(headerName);
+      }
+      // Uic headers
+      if (!this->UicSkip(absFilename) && !this->UicSkip(headerName)) {
+        uicHeaderFiles.insert(headerName);
+      }
+    }
+  }
+}
+
+bool cmQtAutoGenerators::ParseHeaders(
+  const std::set<std::string>& mocHeaderFiles,
+  const std::set<std::string>& uicHeaderFiles,
+  const std::map<std::string, std::string>& mocsIncluded,
+  std::map<std::string, std::string>& mocsNotIncluded,
+  std::map<std::string, std::set<std::string> >& mocDepends,
+  std::map<std::string, std::vector<std::string> >& uisIncluded)
+{
+  bool success = true;
+  // Merged header files list to read files only once
+  std::set<std::string> headerFiles;
+  headerFiles.insert(mocHeaderFiles.begin(), mocHeaderFiles.end());
+  headerFiles.insert(uicHeaderFiles.begin(), uicHeaderFiles.end());
+
+  for (std::set<std::string>::const_iterator hIt = headerFiles.begin();
+       hIt != headerFiles.end(); ++hIt) {
+    const std::string& headerName = *hIt;
+    std::string contentText;
+    if (ReadAll(contentText, headerName)) {
+      // Parse header content for MOC
+      if ((mocHeaderFiles.find(headerName) != mocHeaderFiles.end()) &&
+          (mocsIncluded.find(headerName) == mocsIncluded.end())) {
+        this->MocParseHeaderContent(headerName, contentText, mocsNotIncluded,
+                                    mocDepends);
+      }
+      // Parse header content for UIC
+      if (uicHeaderFiles.find(headerName) != uicHeaderFiles.end()) {
+        this->UicParseContent(headerName, contentText, uisIncluded);
+      }
+    } else {
+      std::ostringstream ost;
+      ost << "AutoGen: Error: Could not read header file:\n"
+          << Quoted(headerName);
+      this->LogError(ost.str());
+      success = false;
+      break;
+    }
+  }
+  return success;
+}
+
+bool cmQtAutoGenerators::MocGenerateAll(
+  const std::map<std::string, std::string>& mocsIncluded,
+  const std::map<std::string, std::string>& mocsNotIncluded,
+  const std::map<std::string, std::set<std::string> >& mocDepends)
+{
+  if (!this->MocEnabled()) {
+    return true;
+  }
+
+  // Look for name collisions
+  {
+    std::multimap<std::string, std::string> collisions;
+    // Test merged map of included and notIncluded
+    std::map<std::string, std::string> mergedMocs(mocsIncluded);
+    mergedMocs.insert(mocsNotIncluded.begin(), mocsNotIncluded.end());
+    if (this->NameCollisionTest(mergedMocs, collisions)) {
+      std::ostringstream ost;
+      ost << "AutoMoc: Error: "
+             "The same moc file will be generated "
+             "from different sources.\n"
+             "To avoid this error either\n"
+             "- rename the source files or\n"
+             "- do not include the (moc_NAME.cpp|NAME.moc) file";
+      this->LogErrorNameCollision(ost.str(), collisions);
+      return false;
+    }
+  }
+
+  // Generate moc_predefs
+  if (!this->MocPredefsCmd.empty()) {
+    if (this->MocSettingsChanged ||
+        FileAbsentOrOlder(this->MocPredefsFileAbs, this->SettingsFile)) {
+      this->LogBold("Generating MOC predefs " + this->MocPredefsFileRel);
+
+      std::string output;
+      {
+        // Compose command
+        std::vector<std::string> cmd = this->MocPredefsCmd;
+        // Add includes
+        cmd.insert(cmd.end(), this->MocIncludes.begin(),
+                   this->MocIncludes.end());
+        // Add definitions
+        for (std::vector<std::string>::const_iterator it =
+               this->MocDefinitions.begin();
+             it != this->MocDefinitions.end(); ++it) {
+          cmd.push_back("-D" + (*it));
+        }
+        // Add options
+        cmd.insert(cmd.end(), this->MocOptions.begin(),
+                   this->MocOptions.end());
+        // Execute command
+        if (!this->RunCommand(cmd, output, false)) {
+          {
+            std::ostringstream ost;
+            ost << "AutoMoc: Error: moc predefs generation command failed\n";
+            ost << "AutoMoc: Command:\n" << QuotedCommand(cmd) << "\n";
+            ost << "AutoMoc: Command output:\n" << output << "\n";
+            this->LogError(ost.str());
+          }
+          return false;
+        }
+      }
+      // (Re)write predefs file only on demand
+      if (this->FileDiffers(this->MocPredefsFileAbs, output)) {
+        if (this->FileWrite("AutoMoc", this->MocPredefsFileAbs, output)) {
+          this->MocPredefsChanged = true;
+        } else {
+          return false;
+        }
       }
     }
   }
 
-  std::vector<std::string> headerFilesVec;
-  cmSystemTools::ExpandListArgument(this->Headers, headerFilesVec);
-  headerFiles.insert(headerFilesVec.begin(), headerFilesVec.end());
-
-  // key = moc source filepath, value = moc output filename
-  std::map<std::string, std::string> notIncludedMocs;
-  this->ParseHeaders(headerFiles, includedMocs, notIncludedMocs, includedUis);
-
-  // run moc on all the moc's that are #included in source files
-  for(std::map<std::string, std::string>::const_iterator
-                                                     it = includedMocs.begin();
-      it != includedMocs.end();
-      ++it)
-    {
-    this->GenerateMoc(it->first, it->second);
-    }
-  for(std::map<std::string, std::vector<std::string> >::const_iterator
-      it = includedUis.begin();
-      it != includedUis.end();
-      ++it)
-    {
-    for (std::vector<std::string>::const_iterator nit = it->second.begin();
-        nit != it->second.end();
-        ++nit)
-      {
-      this->GenerateUi(it->first, *nit);
-      }
-    }
-
-  if(!this->RccExecutable.empty())
-    {
-    this->GenerateQrc();
-    }
-
-  cmsys_ios::stringstream outStream;
-  outStream << "/* This file is autogenerated, do not edit*/\n";
-
-  bool automocCppChanged = false;
-  if (notIncludedMocs.empty())
-    {
-    outStream << "enum some_compilers { need_more_than_nothing };\n";
-    }
-  else
-    {
-    // run moc on the remaining headers and include them in
-    // the _automoc.cpp file
-    for(std::map<std::string, std::string>::const_iterator
-                                                  it = notIncludedMocs.begin();
-        it != notIncludedMocs.end();
-        ++it)
-      {
-      bool mocSuccess = this->GenerateMoc(it->first, it->second);
-      if (mocSuccess)
-        {
-        automocCppChanged = true;
-        }
-      outStream << "#include \"" << it->second << "\"\n";
-      }
-    }
-
-  if (this->RunMocFailed)
-    {
-    std::cerr << "moc failed..." << std::endl;
-    return false;
-    }
-
-  if (this->RunUicFailed)
-    {
-    std::cerr << "uic failed..." << std::endl;
-    return false;
-    }
-  if (this->RunRccFailed)
-    {
-    std::cerr << "rcc failed..." << std::endl;
-    return false;
-    }
-  outStream.flush();
-  std::string automocSource = outStream.str();
-  if (!automocCppChanged)
-    {
-    // compare contents of the _automoc.cpp file
-    const std::string oldContents = ReadAll(this->OutMocCppFilename);
-    if (oldContents == automocSource)
-      {
-      // nothing changed: don't touch the _automoc.cpp file
-      return true;
-      }
-    }
-
-  // source file that includes all remaining moc files (_automoc.cpp file)
-  cmsys::ofstream outfile;
-  outfile.open(this->OutMocCppFilename.c_str(),
-               std::ios::trunc);
-  outfile << automocSource;
-  outfile.close();
-
-  return true;
-}
-
-
-void cmQtAutoGenerators::ParseCppFile(const std::string& absFilename,
-                const std::vector<std::string>& headerExtensions,
-                std::map<std::string, std::string>& includedMocs,
-                std::map<std::string, std::vector<std::string> > &includedUis)
-{
-  cmsys::RegularExpression mocIncludeRegExp(
-              "[\n][ \t]*#[ \t]*include[ \t]+"
-              "[\"<](([^ \">]+/)?moc_[^ \">/]+\\.cpp|[^ \">]+\\.moc)[\">]");
-
-  const std::string contentsString = ReadAll(absFilename);
-  if (contentsString.empty())
-    {
-    std::cerr << "AUTOGEN: warning: " << absFilename << ": file is empty\n"
-              << std::endl;
-    return;
-    }
-  this->ParseForUic(absFilename, contentsString, includedUis);
-  if (this->MocExecutable.empty())
-    {
-    return;
-    }
-
-  const std::string absPath = cmsys::SystemTools::GetFilenamePath(
-                   cmsys::SystemTools::GetRealPath(absFilename)) + '/';
-  const std::string scannedFileBasename = cmsys::SystemTools::
-                                  GetFilenameWithoutLastExtension(absFilename);
-  std::string macroName;
-  const bool requiresMoc = requiresMocing(contentsString, macroName);
-  bool dotMocIncluded = false;
-  bool mocUnderscoreIncluded = false;
-  std::string ownMocUnderscoreFile;
-  std::string ownDotMocFile;
-  std::string ownMocHeaderFile;
-
-  std::string::size_type matchOffset = 0;
-  // first a simple string check for "moc" is *much* faster than the regexp,
-  // and if the string search already fails, we don't have to try the
-  // expensive regexp
-  if ((strstr(contentsString.c_str(), "moc") != NULL)
-                                    && (mocIncludeRegExp.find(contentsString)))
-    {
-    // for every moc include in the file
-    do
-      {
-      const std::string currentMoc = mocIncludeRegExp.match(1);
-      //std::cout << "found moc include: " << currentMoc << std::endl;
-
-      std::string basename = cmsys::SystemTools::
-                                   GetFilenameWithoutLastExtension(currentMoc);
-      const bool moc_style = cmHasLiteralPrefix(basename, "moc_");
-
-      // If the moc include is of the moc_foo.cpp style we expect
-      // the Q_OBJECT class declaration in a header file.
-      // If the moc include is of the foo.moc style we need to look for
-      // a Q_OBJECT macro in the current source file, if it contains the
-      // macro we generate the moc file from the source file.
-      // Q_OBJECT
-      if (moc_style)
-        {
-        // basename should be the part of the moc filename used for
-        // finding the correct header, so we need to remove the moc_ part
-        basename = basename.substr(4);
-        std::string mocSubDir = extractSubDir(absPath, currentMoc);
-        std::string headerToMoc = findMatchingHeader(
-                               absPath, mocSubDir, basename, headerExtensions);
-
-        if (!headerToMoc.empty())
-          {
-          includedMocs[headerToMoc] = currentMoc;
-          if (basename == scannedFileBasename)
-            {
-            mocUnderscoreIncluded = true;
-            ownMocUnderscoreFile = currentMoc;
-            ownMocHeaderFile = headerToMoc;
-            }
-          }
-        else
-          {
-          std::cerr << "AUTOGEN: error: " << absFilename << ": The file "
-                    << "includes the moc file \"" << currentMoc << "\", "
-                    << "but could not find header \"" << basename
-                    << '{' << this->Join(headerExtensions, ',') << "}\" ";
-          if (mocSubDir.empty())
-            {
-            std::cerr << "in " << absPath << "\n" << std::endl;
-            }
-          else
-            {
-            std::cerr << "neither in " << absPath
-                      << " nor in " << mocSubDir << "\n" << std::endl;
-            }
-
-          ::exit(EXIT_FAILURE);
-          }
-        }
-      else
-        {
-        std::string fileToMoc = absFilename;
-        if ((basename != scannedFileBasename) || (requiresMoc==false))
-          {
-          std::string mocSubDir = extractSubDir(absPath, currentMoc);
-          std::string headerToMoc = findMatchingHeader(
-                              absPath, mocSubDir, basename, headerExtensions);
-          if (!headerToMoc.empty())
-            {
-            // this is for KDE4 compatibility:
-            fileToMoc = headerToMoc;
-            if ((requiresMoc==false) &&(basename==scannedFileBasename))
-              {
-              std::cerr << "AUTOGEN: warning: " << absFilename << ": The file "
-                            "includes the moc file \"" << currentMoc <<
-                            "\", but does not contain a " << macroName
-                            << " macro. Running moc on "
-                        << "\"" << headerToMoc << "\" ! Include \"moc_"
-                        << basename << ".cpp\" for a compatiblity with "
-                           "strict mode (see CMAKE_AUTOMOC_RELAXED_MODE).\n"
-                        << std::endl;
-              }
-            else
-              {
-              std::cerr << "AUTOGEN: warning: " << absFilename << ": The file "
-                            "includes the moc file \"" << currentMoc <<
-                            "\" instead of \"moc_" << basename << ".cpp\". "
-                            "Running moc on "
-                        << "\"" << headerToMoc << "\" ! Include \"moc_"
-                        << basename << ".cpp\" for compatiblity with "
-                           "strict mode (see CMAKE_AUTOMOC_RELAXED_MODE).\n"
-                        << std::endl;
-              }
-            }
-          else
-            {
-            std::cerr <<"AUTOGEN: error: " << absFilename << ": The file "
-                        "includes the moc file \"" << currentMoc <<
-                        "\", which seems to be the moc file from a different "
-                        "source file. CMake also could not find a matching "
-                        "header.\n" << std::endl;
-            ::exit(EXIT_FAILURE);
-            }
-          }
-        else
-          {
-          dotMocIncluded = true;
-          ownDotMocFile = currentMoc;
-          }
-        includedMocs[fileToMoc] = currentMoc;
-        }
-      matchOffset += mocIncludeRegExp.end();
-      } while(mocIncludeRegExp.find(contentsString.c_str() + matchOffset));
-    }
-
-  // In this case, check whether the scanned file itself contains a Q_OBJECT.
-  // If this is the case, the moc_foo.cpp should probably be generated from
-  // foo.cpp instead of foo.h, because otherwise it won't build.
-  // But warn, since this is not how it is supposed to be used.
-  if ((dotMocIncluded == false) && (requiresMoc == true))
-    {
-    if (mocUnderscoreIncluded == true)
-      {
-      // this is for KDE4 compatibility:
-      std::cerr << "AUTOGEN: warning: " << absFilename << ": The file "
-                << "contains a " << macroName << " macro, but does not "
-                "include "
-                << "\"" << scannedFileBasename << ".moc\", but instead "
-                   "includes "
-                << "\"" << ownMocUnderscoreFile  << "\". Running moc on "
-                << "\"" << absFilename << "\" ! Better include \""
-                << scannedFileBasename << ".moc\" for compatiblity with "
-                   "strict mode (see CMAKE_AUTOMOC_RELAXED_MODE).\n"
-                << std::endl;
-      includedMocs[absFilename] = ownMocUnderscoreFile;
-      includedMocs.erase(ownMocHeaderFile);
-      }
-    else
-      {
-      // otherwise always error out since it will not compile:
-      std::cerr << "AUTOGEN: error: " << absFilename << ": The file "
-                << "contains a " << macroName << " macro, but does not "
-                "include "
-                << "\"" << scannedFileBasename << ".moc\" !\n"
-                << std::endl;
-      ::exit(EXIT_FAILURE);
-      }
-    }
-
-}
-
-
-void cmQtAutoGenerators::StrictParseCppFile(const std::string& absFilename,
-                const std::vector<std::string>& headerExtensions,
-                std::map<std::string, std::string>& includedMocs,
-                std::map<std::string, std::vector<std::string> >& includedUis)
-{
-  cmsys::RegularExpression mocIncludeRegExp(
-              "[\n][ \t]*#[ \t]*include[ \t]+"
-              "[\"<](([^ \">]+/)?moc_[^ \">/]+\\.cpp|[^ \">]+\\.moc)[\">]");
-
-  const std::string contentsString = ReadAll(absFilename);
-  if (contentsString.empty())
-    {
-    std::cerr << "AUTOGEN: warning: " << absFilename << ": file is empty\n"
-              << std::endl;
-    return;
-    }
-  this->ParseForUic(absFilename, contentsString, includedUis);
-  if (this->MocExecutable.empty())
-    {
-    return;
-    }
-
-  const std::string absPath = cmsys::SystemTools::GetFilenamePath(
-                   cmsys::SystemTools::GetRealPath(absFilename)) + '/';
-  const std::string scannedFileBasename = cmsys::SystemTools::
-                                  GetFilenameWithoutLastExtension(absFilename);
-
-  bool dotMocIncluded = false;
-
-  std::string::size_type matchOffset = 0;
-  // first a simple string check for "moc" is *much* faster than the regexp,
-  // and if the string search already fails, we don't have to try the
-  // expensive regexp
-  if ((strstr(contentsString.c_str(), "moc") != NULL)
-                                    && (mocIncludeRegExp.find(contentsString)))
-    {
-    // for every moc include in the file
-    do
-      {
-      const std::string currentMoc = mocIncludeRegExp.match(1);
-
-      std::string basename = cmsys::SystemTools::
-                                   GetFilenameWithoutLastExtension(currentMoc);
-      const bool mocUnderscoreStyle = cmHasLiteralPrefix(basename, "moc_");
-
-      // If the moc include is of the moc_foo.cpp style we expect
-      // the Q_OBJECT class declaration in a header file.
-      // If the moc include is of the foo.moc style we need to look for
-      // a Q_OBJECT macro in the current source file, if it contains the
-      // macro we generate the moc file from the source file.
-      if (mocUnderscoreStyle)
-        {
-        // basename should be the part of the moc filename used for
-        // finding the correct header, so we need to remove the moc_ part
-        basename = basename.substr(4);
-        std::string mocSubDir = extractSubDir(absPath, currentMoc);
-        std::string headerToMoc = findMatchingHeader(
-                               absPath, mocSubDir, basename, headerExtensions);
-
-        if (!headerToMoc.empty())
-          {
-          includedMocs[headerToMoc] = currentMoc;
-          }
-        else
-          {
-          std::cerr << "AUTOGEN: error: " << absFilename << " The file "
-                    << "includes the moc file \"" << currentMoc << "\", "
-                    << "but could not find header \"" << basename
-                    << '{' << this->Join(headerExtensions, ',') << "}\" ";
-          if (mocSubDir.empty())
-            {
-            std::cerr << "in " << absPath << "\n" << std::endl;
-            }
-          else
-            {
-            std::cerr << "neither in " << absPath
-                      << " nor in " << mocSubDir << "\n" << std::endl;
-            }
-
-          ::exit(EXIT_FAILURE);
-          }
-        }
-      else
-        {
-        if (basename != scannedFileBasename)
-          {
-          std::cerr <<"AUTOGEN: error: " << absFilename << ": The file "
-                      "includes the moc file \"" << currentMoc <<
-                      "\", which seems to be the moc file from a different "
-                      "source file. This is not supported. "
-                      "Include \"" << scannedFileBasename << ".moc\" to run "
-                      "moc on this source file.\n" << std::endl;
-          ::exit(EXIT_FAILURE);
-          }
-        dotMocIncluded = true;
-        includedMocs[absFilename] = currentMoc;
-        }
-      matchOffset += mocIncludeRegExp.end();
-      } while(mocIncludeRegExp.find(contentsString.c_str() + matchOffset));
-    }
-
-  // In this case, check whether the scanned file itself contains a Q_OBJECT.
-  // If this is the case, the moc_foo.cpp should probably be generated from
-  // foo.cpp instead of foo.h, because otherwise it won't build.
-  // But warn, since this is not how it is supposed to be used.
-  std::string macroName;
-  if ((dotMocIncluded == false) && (requiresMocing(contentsString,
-                                                     macroName)))
-    {
-    // otherwise always error out since it will not compile:
-    std::cerr << "AUTOGEN: error: " << absFilename << ": The file "
-              << "contains a " << macroName << " macro, but does not include "
-              << "\"" << scannedFileBasename << ".moc\" !\n"
-              << std::endl;
-    ::exit(EXIT_FAILURE);
-    }
-
-}
-
-
-void cmQtAutoGenerators::ParseForUic(const std::string& absFilename,
-                std::map<std::string, std::vector<std::string> >& includedUis)
-{
-  if (this->UicExecutable.empty())
-    {
-    return;
-    }
-  const std::string contentsString = ReadAll(absFilename);
-  if (contentsString.empty())
-    {
-    std::cerr << "AUTOGEN: warning: " << absFilename << ": file is empty\n"
-              << std::endl;
-    return;
-    }
-  this->ParseForUic(absFilename, contentsString, includedUis);
-}
-
-
-void cmQtAutoGenerators::ParseForUic(const std::string& absFilename,
-                const std::string& contentsString,
-                std::map<std::string, std::vector<std::string> >& includedUis)
-{
-  if (this->UicExecutable.empty())
-    {
-    return;
-    }
-  cmsys::RegularExpression uiIncludeRegExp(
-              "[\n][ \t]*#[ \t]*include[ \t]+"
-              "[\"<](([^ \">]+/)?ui_[^ \">/]+\\.h)[\">]");
-
-  std::string::size_type matchOffset = 0;
-
-  const std::string realName =
-                   cmsys::SystemTools::GetRealPath(absFilename);
-
-  matchOffset = 0;
-  if ((strstr(contentsString.c_str(), "ui_") != NULL)
-                                    && (uiIncludeRegExp.find(contentsString)))
-    {
-    do
-      {
-      const std::string currentUi = uiIncludeRegExp.match(1);
-
-      std::string basename = cmsys::SystemTools::
-                                  GetFilenameWithoutLastExtension(currentUi);
-
-      // basename should be the part of the ui filename used for
-      // finding the correct header, so we need to remove the ui_ part
-      basename = basename.substr(3);
-
-      includedUis[realName].push_back(basename);
-
-      matchOffset += uiIncludeRegExp.end();
-      } while(uiIncludeRegExp.find(contentsString.c_str() + matchOffset));
-    }
-}
-
-
-void
-cmQtAutoGenerators::SearchHeadersForCppFile(const std::string& absFilename,
-                              const std::vector<std::string>& headerExtensions,
-                              std::set<std::string>& absHeaders)
-{
-  // search for header files and private header files we may need to moc:
-  const std::string basename =
-              cmsys::SystemTools::GetFilenameWithoutLastExtension(absFilename);
-  const std::string absPath = cmsys::SystemTools::GetFilenamePath(
-                   cmsys::SystemTools::GetRealPath(absFilename)) + '/';
-
-  for(std::vector<std::string>::const_iterator ext = headerExtensions.begin();
-      ext != headerExtensions.end();
-      ++ext)
-    {
-    const std::string headerName = absPath + basename + "." + (*ext);
-    if (cmsys::SystemTools::FileExists(headerName.c_str()))
-      {
-      absHeaders.insert(headerName);
-      break;
-      }
-    }
-  for(std::vector<std::string>::const_iterator ext = headerExtensions.begin();
-      ext != headerExtensions.end();
-      ++ext)
-    {
-    const std::string privateHeaderName = absPath+basename+"_p."+(*ext);
-    if (cmsys::SystemTools::FileExists(privateHeaderName.c_str()))
-      {
-      absHeaders.insert(privateHeaderName);
-      break;
-      }
-    }
-
-}
-
-
-void cmQtAutoGenerators::ParseHeaders(const std::set<std::string>& absHeaders,
-                const std::map<std::string, std::string>& includedMocs,
-                std::map<std::string, std::string>& notIncludedMocs,
-                std::map<std::string, std::vector<std::string> >& includedUis)
-{
-  for(std::set<std::string>::const_iterator hIt=absHeaders.begin();
-      hIt!=absHeaders.end();
-      ++hIt)
-    {
-    const std::string& headerName = *hIt;
-    const std::string contents = ReadAll(headerName);
-
-    if (!this->MocExecutable.empty()
-        && includedMocs.find(headerName) == includedMocs.end())
-      {
-      if (this->Verbose)
-        {
-        std::cout << "AUTOGEN: Checking " << headerName << std::endl;
-        }
-
-      const std::string basename = cmsys::SystemTools::
-                                   GetFilenameWithoutLastExtension(headerName);
-
-      const std::string currentMoc = "moc_" + basename + ".cpp";
-      std::string macroName;
-      if (requiresMocing(contents, macroName))
-        {
-        //std::cout << "header contains Q_OBJECT macro";
-        notIncludedMocs[headerName] = currentMoc;
-        }
-      }
-    this->ParseForUic(headerName, contents, includedUis);
-    }
-}
-
-bool cmQtAutoGenerators::GenerateMoc(const std::string& sourceFile,
-                              const std::string& mocFileName)
-{
-  const std::string mocFilePath = this->Builddir + mocFileName;
-  int sourceNewerThanMoc = 0;
-  bool success = cmsys::SystemTools::FileTimeCompare(sourceFile,
-                                                     mocFilePath,
-                                                     &sourceNewerThanMoc);
-  if (this->GenerateAll || !success || sourceNewerThanMoc >= 0)
-    {
-    // make sure the directory for the resulting moc file exists
-    std::string mocDir = mocFilePath.substr(0, mocFilePath.rfind('/'));
-    if (!cmsys::SystemTools::FileExists(mocDir.c_str(), false))
-      {
-      cmsys::SystemTools::MakeDirectory(mocDir.c_str());
-      }
-
-    std::string msg = "Generating ";
-    msg += mocFileName;
-    cmSystemTools::MakefileColorEcho(cmsysTerminal_Color_ForegroundBlue
-                                           |cmsysTerminal_Color_ForegroundBold,
-                                     msg.c_str(), true, this->ColorOutput);
-
-    std::vector<std::string> command;
-    command.push_back(this->MocExecutable);
-    command.insert(command.end(),
-                   this->MocIncludes.begin(), this->MocIncludes.end());
-    command.insert(command.end(),
-                   this->MocDefinitions.begin(), this->MocDefinitions.end());
-    command.insert(command.end(),
-                   this->MocOptions.begin(), this->MocOptions.end());
-#ifdef _WIN32
-    command.push_back("-DWIN32");
-#endif
-    command.push_back("-o");
-    command.push_back(mocFilePath);
-    command.push_back(sourceFile);
-
-    if (this->Verbose)
-      {
-      for(std::vector<std::string>::const_iterator cmdIt = command.begin();
-          cmdIt != command.end();
-          ++cmdIt)
-        {
-        std::cout << *cmdIt << " ";
-        }
-      std::cout << std::endl;
-      }
-
-    std::string output;
-    int retVal = 0;
-    bool result = cmSystemTools::RunSingleCommand(command, &output, &retVal);
-    if (!result || retVal)
-      {
-      std::cerr << "AUTOGEN: error: process for " << mocFilePath <<" failed:\n"
-                << output << std::endl;
-      this->RunMocFailed = true;
-      cmSystemTools::RemoveFile(mocFilePath);
-      }
-    return true;
-    }
-  return false;
-}
-
-bool cmQtAutoGenerators::GenerateUi(const std::string& realName,
-                                    const std::string& uiFileName)
-{
-  if (!cmsys::SystemTools::FileExists(this->Builddir.c_str(), false))
-    {
-    cmsys::SystemTools::MakeDirectory(this->Builddir.c_str());
-    }
-
-  const std::string path = cmsys::SystemTools::GetFilenamePath(
-                                                      realName) + '/';
-
-  std::string ui_output_file = "ui_" + uiFileName + ".h";
-  std::string ui_input_file = path + uiFileName + ".ui";
-
-  int sourceNewerThanUi = 0;
-  bool success = cmsys::SystemTools::FileTimeCompare(ui_input_file,
-                                    this->Builddir + ui_output_file,
-                                                     &sourceNewerThanUi);
-  if (this->GenerateAll || !success || sourceNewerThanUi >= 0)
-    {
-    std::string msg = "Generating ";
-    msg += ui_output_file;
-    cmSystemTools::MakefileColorEcho(cmsysTerminal_Color_ForegroundBlue
-                                          |cmsysTerminal_Color_ForegroundBold,
-                                      msg.c_str(), true, this->ColorOutput);
-
-    std::vector<std::string> command;
-    command.push_back(this->UicExecutable);
-
-    std::vector<std::string> opts = this->UicTargetOptions;
-    std::map<std::string, std::string>::const_iterator optionIt
-            = this->UicOptions.find(ui_input_file);
-    if (optionIt != this->UicOptions.end())
-      {
-      std::vector<std::string> fileOpts;
-      cmSystemTools::ExpandListArgument(optionIt->second, fileOpts);
-      this->MergeUicOptions(opts, fileOpts, this->QtMajorVersion == "5");
-      }
-    command.insert(command.end(), opts.begin(), opts.end());
-
-    command.push_back("-o");
-    command.push_back(this->Builddir + ui_output_file);
-    command.push_back(ui_input_file);
-
-    if (this->Verbose)
-      {
-      for(std::vector<std::string>::const_iterator cmdIt = command.begin();
-          cmdIt != command.end();
-          ++cmdIt)
-        {
-        std::cout << *cmdIt << " ";
-        }
-      std::cout << std::endl;
-      }
-    std::string output;
-    int retVal = 0;
-    bool result = cmSystemTools::RunSingleCommand(command, &output, &retVal);
-    if (!result || retVal)
-      {
-      std::cerr << "AUTOUIC: error: process for " << ui_output_file <<
-                " needed by\n \"" << realName << "\"\nfailed:\n" << output
-                << std::endl;
-      this->RunUicFailed = true;
-      cmSystemTools::RemoveFile(ui_output_file);
-      return false;
-      }
-    return true;
-    }
-  return false;
-}
-
-bool cmQtAutoGenerators::InputFilesNewerThanQrc(const std::string& qrcFile,
-                                                const std::string& rccOutput)
-{
-  std::vector<std::string> const& files = this->RccInputs[qrcFile];
-  for (std::vector<std::string>::const_iterator it = files.begin();
-       it != files.end(); ++it)
-    {
-    int inputNewerThanQrc = 0;
-    bool success = cmsys::SystemTools::FileTimeCompare(*it,
-                                                      rccOutput,
-                                                      &inputNewerThanQrc);
-    if (!success || inputNewerThanQrc >= 0)
-      {
-      return true;
-      }
-    }
-  return false;
-}
-
-bool cmQtAutoGenerators::GenerateQrc()
-{
-  for(std::vector<std::string>::const_iterator si = this->RccSources.begin();
-      si != this->RccSources.end(); ++si)
-    {
-    std::string ext = cmsys::SystemTools::GetFilenameLastExtension(*si);
-
-    if (ext != ".qrc")
-      {
-      continue;
-      }
-    std::vector<std::string> command;
-    command.push_back(this->RccExecutable);
-
-    std::string basename = cmsys::SystemTools::
-                                  GetFilenameWithoutLastExtension(*si);
-
-    std::string rcc_output_file = this->Builddir
-                                + "CMakeFiles/" + this->OriginTargetName
-                                + ".dir/qrc_" + basename + ".cpp";
-
-    int sourceNewerThanQrc = 0;
-    bool generateQrc = !cmsys::SystemTools::FileTimeCompare(*si,
-                                                      rcc_output_file,
-                                                      &sourceNewerThanQrc);
-    generateQrc = generateQrc || (sourceNewerThanQrc >= 0);
-    generateQrc = generateQrc || this->InputFilesNewerThanQrc(*si,
-                                                          rcc_output_file);
-
-    if (this->GenerateAll || generateQrc)
-      {
-      std::map<std::string, std::string>::const_iterator optionIt
-              = this->RccOptions.find(*si);
-      if (optionIt != this->RccOptions.end())
-        {
-        cmSystemTools::ExpandListArgument(optionIt->second, command);
-        }
-
-      command.push_back("-name");
-      command.push_back(basename);
-      command.push_back("-o");
-      command.push_back(rcc_output_file);
-      command.push_back(*si);
-
-      if (this->Verbose)
-        {
-        for(std::vector<std::string>::const_iterator cmdIt = command.begin();
-            cmdIt != command.end();
-            ++cmdIt)
-          {
-          std::cout << *cmdIt << " ";
-          }
-        std::cout << std::endl;
-        }
-      std::string output;
-      int retVal = 0;
-      bool result = cmSystemTools::RunSingleCommand(command, &output, &retVal);
-      if (!result || retVal)
-        {
-        std::cerr << "AUTORCC: error: process for " << rcc_output_file <<
-                  " failed:\n" << output << std::endl;
-        this->RunRccFailed = true;
-        cmSystemTools::RemoveFile(rcc_output_file);
+  // Generate moc files that are included by source files.
+  for (std::map<std::string, std::string>::const_iterator it =
+         mocsIncluded.begin();
+       it != mocsIncluded.end(); ++it) {
+    if (!this->MocGenerateFile(it->first, it->second, mocDepends, true)) {
+      if (this->MocRunFailed) {
         return false;
-        }
       }
     }
+  }
+
+  // Generate moc files that are _not_ included by source files.
+  bool mocCompFileGenerated = false;
+  for (std::map<std::string, std::string>::const_iterator it =
+         mocsNotIncluded.begin();
+       it != mocsNotIncluded.end(); ++it) {
+    if (this->MocGenerateFile(it->first, it->second, mocDepends, false)) {
+      mocCompFileGenerated = true;
+    } else {
+      if (this->MocRunFailed) {
+        return false;
+      }
+    }
+  }
+
+  // Compose mocs compilation file content
+  std::string automocSource;
+  {
+    std::ostringstream ost;
+    ost << "/* This file is autogenerated, do not edit*/\n";
+    if (mocsNotIncluded.empty()) {
+      // Dummy content
+      ost << "enum some_compilers { need_more_than_nothing };\n";
+    } else {
+      // Valid content
+      for (std::map<std::string, std::string>::const_iterator it =
+             mocsNotIncluded.begin();
+           it != mocsNotIncluded.end(); ++it) {
+        ost << "#include \"" << it->second << "\"\n";
+      }
+    }
+    automocSource = ost.str();
+  }
+
+  if (this->FileDiffers(this->MocCompFileAbs, automocSource)) {
+    // Actually write mocs compilation file
+    this->LogBold("Generating MOC compilation " + this->MocCompFileRel);
+    if (!this->FileWrite("AutoMoc", this->MocCompFileAbs, automocSource)) {
+      return false;
+    }
+  } else if (mocCompFileGenerated) {
+    // Only touch mocs compilation file
+    if (this->Verbose) {
+      this->LogInfo("Touching MOC compilation " + this->MocCompFileRel);
+    }
+    cmSystemTools::Touch(this->MocCompFileAbs, false);
+  }
+
   return true;
 }
 
-std::string cmQtAutoGenerators::Join(const std::vector<std::string>& lst,
-                              char separator)
+/**
+ * @return True if a moc file was created. False may indicate an error.
+ */
+bool cmQtAutoGenerators::MocGenerateFile(
+  const std::string& sourceFile, const std::string& mocFileName,
+  const std::map<std::string, std::set<std::string> >& mocDepends,
+  bool included)
 {
-    if (lst.empty())
-      {
-      return "";
+  bool mocGenerated = false;
+  bool generateMoc = this->MocSettingsChanged || this->MocPredefsChanged;
+
+  const std::string mocFileRel =
+    included ? (this->AutogenIncludeDir + mocFileName) : mocFileName;
+  const std::string mocFileAbs =
+    cmSystemTools::CollapseCombinedPath(this->AutogenBuildDir, mocFileRel);
+
+  if (!generateMoc) {
+    // Test if the source file is newer that the build file
+    generateMoc = FileAbsentOrOlder(mocFileAbs, sourceFile);
+    if (!generateMoc) {
+      // Test if a dependency file changed
+      std::map<std::string, std::set<std::string> >::const_iterator dit =
+        mocDepends.find(sourceFile);
+      if (dit != mocDepends.end()) {
+        for (std::set<std::string>::const_iterator fit = dit->second.begin();
+             fit != dit->second.end(); ++fit) {
+          if (FileAbsentOrOlder(mocFileAbs, *fit)) {
+            generateMoc = true;
+            break;
+          }
+        }
       }
-
-    std::string result;
-    for (std::vector<std::string>::const_iterator it = lst.begin();
-         it != lst.end();
-         ++it)
-      {
-      result += "." + (*it) + separator;
-      }
-    result.erase(result.end() - 1);
-    return result;
-}
-
-
-bool cmQtAutoGenerators::StartsWith(const std::string& str,
-                                    const std::string& with)
-{
-  return (str.substr(0, with.length()) == with);
-}
-
-
-bool cmQtAutoGenerators::EndsWith(const std::string& str,
-                                  const std::string& with)
-{
-  if (with.length() > (str.length()))
-    {
-    return false;
     }
-  return (str.substr(str.length() - with.length(), with.length()) == with);
+  }
+  if (generateMoc) {
+    // Log
+    this->LogBold("Generating MOC source " + mocFileRel);
+
+    // Make sure the parent directory exists
+    if (this->MakeParentDirectory("AutoMoc", mocFileAbs)) {
+      // Compose moc command
+      std::vector<std::string> cmd;
+      cmd.push_back(this->MocExecutable);
+      // Add includes
+      cmd.insert(cmd.end(), this->MocIncludes.begin(),
+                 this->MocIncludes.end());
+      // Add definitions
+      for (std::vector<std::string>::const_iterator it =
+             this->MocDefinitions.begin();
+           it != this->MocDefinitions.end(); ++it) {
+        cmd.push_back("-D" + (*it));
+      }
+      // Add options
+      cmd.insert(cmd.end(), this->MocOptions.begin(), this->MocOptions.end());
+      // Add predefs include
+      if (!this->MocPredefsFileAbs.empty()) {
+        cmd.push_back("--include");
+        cmd.push_back(this->MocPredefsFileAbs);
+      }
+      cmd.push_back("-o");
+      cmd.push_back(mocFileAbs);
+      cmd.push_back(sourceFile);
+
+      // Execute moc command
+      std::string output;
+      if (this->RunCommand(cmd, output)) {
+        // Success
+        mocGenerated = true;
+      } else {
+        // Command failed
+        {
+          std::ostringstream ost;
+          ost << "AutoMoc: Error: moc process failed for\n";
+          ost << Quoted(mocFileRel) << "\n";
+          ost << "AutoMoc: Command:\n" << QuotedCommand(cmd) << "\n";
+          ost << "AutoMoc: Command output:\n" << output << "\n";
+          this->LogError(ost.str());
+        }
+        cmSystemTools::RemoveFile(mocFileAbs);
+        this->MocRunFailed = true;
+      }
+    } else {
+      // Parent directory creation failed
+      this->MocRunFailed = true;
+    }
+  }
+  return mocGenerated;
+}
+
+bool cmQtAutoGenerators::UicFindIncludedFile(std::string& absFile,
+                                             const std::string& sourceFile,
+                                             const std::string& searchPath,
+                                             const std::string& searchFile)
+{
+  bool success = false;
+  std::vector<std::string> testFiles;
+  // Collect search paths list
+  {
+    const std::string searchFileFull = searchPath + searchFile;
+    // Vicinity of the source
+    {
+      const std::string sourcePath = SubDirPrefix(sourceFile);
+      testFiles.push_back(sourcePath + searchFile);
+      if (!searchPath.empty()) {
+        testFiles.push_back(sourcePath + searchFileFull);
+      }
+    }
+    // AUTOUIC search paths
+    if (!this->UicSearchPaths.empty()) {
+      for (std::vector<std::string>::const_iterator iit =
+             this->UicSearchPaths.begin();
+           iit != this->UicSearchPaths.end(); ++iit) {
+        testFiles.push_back(*iit + "/" + searchFile);
+      }
+      if (!searchPath.empty()) {
+        for (std::vector<std::string>::const_iterator iit =
+               this->UicSearchPaths.begin();
+             iit != this->UicSearchPaths.end(); ++iit) {
+          testFiles.push_back(*iit + "/" + searchFileFull);
+        }
+      }
+    }
+  }
+
+  // Search for the .ui file!
+  for (std::vector<std::string>::const_iterator iit = testFiles.begin();
+       iit != testFiles.end(); ++iit) {
+    const std::string& testFile = *iit;
+    if (cmsys::SystemTools::FileExists(testFile.c_str())) {
+      absFile = cmsys::SystemTools::GetRealPath(testFile);
+      success = true;
+      break;
+    }
+  }
+
+  // Log error
+  if (!success) {
+    std::ostringstream ost;
+    ost << "AutoUic: Error: " << Quoted(sourceFile) << "\n";
+    ost << "Could not find " << Quoted(searchFile) << " in\n";
+    for (std::vector<std::string>::const_iterator iit = testFiles.begin();
+         iit != testFiles.end(); ++iit) {
+      ost << "  " << Quoted(*iit) << "\n";
+    }
+    this->LogError(ost.str());
+  }
+
+  return success;
+}
+
+bool cmQtAutoGenerators::UicGenerateAll(
+  const std::map<std::string, std::vector<std::string> >& uisIncluded)
+{
+  if (!this->UicEnabled()) {
+    return true;
+  }
+
+  // single map with input / output names
+  std::map<std::string, std::map<std::string, std::string> > sourceGenMap;
+  {
+    // Collision lookup map
+    std::map<std::string, std::string> testMap;
+    // Compile maps
+    for (std::map<std::string, std::vector<std::string> >::const_iterator sit =
+           uisIncluded.begin();
+         sit != uisIncluded.end(); ++sit) {
+      const std::string& source(sit->first);
+      const std::vector<std::string>& sourceIncs(sit->second);
+      // insert new source/destination map
+      std::map<std::string, std::string>& uiGenMap = sourceGenMap[source];
+      for (std::vector<std::string>::const_iterator uit = sourceIncs.begin();
+           uit != sourceIncs.end(); ++uit) {
+        // Remove ui_ from the begin filename by substr()
+        const std::string uiBasePath = SubDirPrefix(*uit);
+        const std::string uiBaseName =
+          cmsys::SystemTools::GetFilenameWithoutLastExtension(*uit).substr(3);
+        const std::string uiFileName = uiBaseName + ".ui";
+        std::string uiInputFile;
+        if (UicFindIncludedFile(uiInputFile, source, uiBasePath, uiFileName)) {
+          std::string uiOutputFile = uiBasePath + "ui_" + uiBaseName + ".h";
+          cmSystemTools::ReplaceString(uiOutputFile, "..", "__");
+          uiGenMap[uiInputFile] = uiOutputFile;
+          testMap[uiInputFile] = uiOutputFile;
+        } else {
+          return false;
+        }
+      }
+    }
+    // look for name collisions
+    {
+      std::multimap<std::string, std::string> collisions;
+      if (this->NameCollisionTest(testMap, collisions)) {
+        std::ostringstream ost;
+        ost << "AutoUic: Error: The same ui_NAME.h file will be generated "
+               "from different sources.\n"
+               "To avoid this error rename the source files.\n";
+        this->LogErrorNameCollision(ost.str(), collisions);
+        return false;
+      }
+    }
+  }
+
+  // generate ui files
+  for (std::map<std::string,
+                std::map<std::string, std::string> >::const_iterator it =
+         sourceGenMap.begin();
+       it != sourceGenMap.end(); ++it) {
+    for (std::map<std::string, std::string>::const_iterator sit =
+           it->second.begin();
+         sit != it->second.end(); ++sit) {
+      if (!this->UicGenerateFile(it->first, sit->first, sit->second)) {
+        if (this->UicRunFailed) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * @return True if a uic file was created. False may indicate an error.
+ */
+bool cmQtAutoGenerators::UicGenerateFile(const std::string& realName,
+                                         const std::string& uiInputFile,
+                                         const std::string& uiOutputFile)
+{
+  bool uicGenerated = false;
+  bool generateUic = this->UicSettingsChanged;
+
+  const std::string uicFileRel = this->AutogenIncludeDir + uiOutputFile;
+  const std::string uicFileAbs =
+    cmSystemTools::CollapseCombinedPath(this->AutogenBuildDir, uicFileRel);
+
+  if (!generateUic) {
+    // Test if the source file is newer that the build file
+    generateUic = FileAbsentOrOlder(uicFileAbs, uiInputFile);
+  }
+  if (generateUic) {
+    // Log
+    this->LogBold("Generating UIC header " + uicFileRel);
+
+    // Make sure the parent directory exists
+    if (this->MakeParentDirectory("AutoUic", uicFileAbs)) {
+      // Compose uic command
+      std::vector<std::string> cmd;
+      cmd.push_back(this->UicExecutable);
+      {
+        std::vector<std::string> allOpts = this->UicTargetOptions;
+        std::map<std::string, std::string>::const_iterator optionIt =
+          this->UicOptions.find(uiInputFile);
+        if (optionIt != this->UicOptions.end()) {
+          std::vector<std::string> fileOpts;
+          cmSystemTools::ExpandListArgument(optionIt->second, fileOpts);
+          UicMergeOptions(allOpts, fileOpts, (this->QtMajorVersion == "5"));
+        }
+        cmd.insert(cmd.end(), allOpts.begin(), allOpts.end());
+      }
+      cmd.push_back("-o");
+      cmd.push_back(uicFileAbs);
+      cmd.push_back(uiInputFile);
+
+      std::string output;
+      if (this->RunCommand(cmd, output)) {
+        // Success
+        uicGenerated = true;
+      } else {
+        // Command failed
+        {
+          std::ostringstream ost;
+          ost << "AutoUic: Error: uic process failed for\n";
+          ost << Quoted(uicFileRel) << " needed by\n";
+          ost << Quoted(realName) << "\n";
+          ost << "AutoUic: Command:\n" << QuotedCommand(cmd) << "\n";
+          ost << "AutoUic: Command output:\n" << output << "\n";
+          this->LogError(ost.str());
+        }
+        cmSystemTools::RemoveFile(uicFileAbs);
+        this->UicRunFailed = true;
+      }
+    } else {
+      // Parent directory creation failed
+      this->UicRunFailed = true;
+    }
+  }
+  return uicGenerated;
+}
+
+bool cmQtAutoGenerators::RccGenerateAll()
+{
+  if (!this->RccEnabled()) {
+    return true;
+  }
+
+  // generate single map with input / output names
+  std::map<std::string, std::string> qrcGenMap;
+  {
+    const std::string qrcPrefix = "qrc_";
+    const std::string qrcSuffix = this->ConfigSuffix + ".cpp";
+    for (std::vector<std::string>::const_iterator si =
+           this->RccSources.begin();
+         si != this->RccSources.end(); ++si) {
+      const std::string ext =
+        cmsys::SystemTools::GetFilenameLastExtension(*si);
+      if (ext == ".qrc") {
+        qrcGenMap[*si] = this->ChecksumedPath(*si, qrcPrefix, qrcSuffix);
+      }
+    }
+  }
+
+  // look for name collisions
+  {
+    std::multimap<std::string, std::string> collisions;
+    if (this->NameCollisionTest(qrcGenMap, collisions)) {
+      std::ostringstream ost;
+      ost << "AutoRcc: Error: The same qrc_NAME.cpp file"
+             " will be generated from different sources.\n"
+             "To avoid this error rename the source .qrc files.\n";
+      this->LogErrorNameCollision(ost.str(), collisions);
+      return false;
+    }
+  }
+
+  // generate qrc files
+  for (std::map<std::string, std::string>::const_iterator si =
+         qrcGenMap.begin();
+       si != qrcGenMap.end(); ++si) {
+    bool unique = FileNameIsUnique(si->first, qrcGenMap);
+    if (!this->RccGenerateFile(si->first, si->second, unique)) {
+      if (this->RccRunFailed) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * @return True if a rcc file was created. False may indicate an error.
+ */
+bool cmQtAutoGenerators::RccGenerateFile(const std::string& rccInputFile,
+                                         const std::string& rccOutputFile,
+                                         bool unique_n)
+{
+  bool rccGenerated = false;
+  bool generateRcc = this->RccSettingsChanged;
+
+  const std::string rccBuildFile =
+    cmSystemTools::CollapseCombinedPath(this->AutogenBuildDir, rccOutputFile);
+
+  if (!generateRcc) {
+    // Test if the resources list file is newer than build file
+    generateRcc = FileAbsentOrOlder(rccBuildFile, rccInputFile);
+    if (!generateRcc) {
+      // Acquire input file list
+      std::vector<std::string> readFiles;
+      const std::vector<std::string>* files = &this->RccInputs[rccInputFile];
+      if (files->empty()) {
+        // Read input file list from qrc file
+        std::string error;
+        if (cmQtAutoGeneratorCommon::RccListInputs(
+              this->QtMajorVersion, this->RccExecutable, rccInputFile,
+              readFiles, &error)) {
+          files = &readFiles;
+        } else {
+          files = CM_NULLPTR;
+          this->LogError(error);
+          this->RccRunFailed = true;
+        }
+      }
+      // Test if any input file is newer than the build file
+      if (files != CM_NULLPTR) {
+        for (std::vector<std::string>::const_iterator it = files->begin();
+             it != files->end(); ++it) {
+          if (FileAbsentOrOlder(rccBuildFile, *it)) {
+            generateRcc = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  if (generateRcc) {
+    // Log
+    this->LogBold("Generating RCC source " + rccOutputFile);
+
+    // Make sure the parent directory exists
+    if (this->MakeParentDirectory("AutoRcc", rccBuildFile)) {
+      // Compose symbol name
+      std::string symbolName =
+        cmsys::SystemTools::GetFilenameWithoutLastExtension(rccInputFile);
+      if (!unique_n) {
+        symbolName += "_";
+        symbolName += FPathChecksum.getPart(rccInputFile);
+      }
+      // Replace '-' with '_'. The former is valid for
+      // file names but not for symbol names.
+      std::replace(symbolName.begin(), symbolName.end(), '-', '_');
+
+      // Compose rcc command
+      std::vector<std::string> cmd;
+      cmd.push_back(this->RccExecutable);
+      {
+        std::map<std::string, std::string>::const_iterator optionIt =
+          this->RccOptions.find(rccInputFile);
+        if (optionIt != this->RccOptions.end()) {
+          cmSystemTools::ExpandListArgument(optionIt->second, cmd);
+        }
+      }
+      cmd.push_back("-name");
+      cmd.push_back(symbolName);
+      cmd.push_back("-o");
+      cmd.push_back(rccBuildFile);
+      cmd.push_back(rccInputFile);
+
+      std::string output;
+      if (this->RunCommand(cmd, output)) {
+        // Success
+        rccGenerated = true;
+      } else {
+        // Command failed
+        {
+          std::ostringstream ost;
+          ost << "AutoRcc: Error: rcc process failed for\n";
+          ost << Quoted(rccOutputFile) << "\n";
+          ost << "AutoRcc: Command:\n" << QuotedCommand(cmd) << "\n";
+          ost << "AutoRcc: Command output:\n" << output << "\n";
+          this->LogError(ost.str());
+        }
+        cmSystemTools::RemoveFile(rccBuildFile);
+        this->RccRunFailed = true;
+      }
+    } else {
+      // Parent directory creation failed
+      this->RccRunFailed = true;
+    }
+  }
+  return rccGenerated;
+}
+
+void cmQtAutoGenerators::LogErrorNameCollision(
+  const std::string& message,
+  const std::multimap<std::string, std::string>& collisions) const
+{
+  typedef std::multimap<std::string, std::string>::const_iterator Iter;
+
+  std::ostringstream ost;
+  // Add message
+  if (!message.empty()) {
+    ost << message;
+    if (message[message.size() - 1] != '\n') {
+      ost << '\n';
+    }
+  }
+  // Append collision list
+  for (Iter it = collisions.begin(); it != collisions.end(); ++it) {
+    ost << it->first << " : " << it->second << '\n';
+  }
+  this->LogError(ost.str());
+}
+
+void cmQtAutoGenerators::LogBold(const std::string& message) const
+{
+  cmSystemTools::MakefileColorEcho(cmsysTerminal_Color_ForegroundBlue |
+                                     cmsysTerminal_Color_ForegroundBold,
+                                   message.c_str(), true, this->ColorOutput);
+}
+
+void cmQtAutoGenerators::LogInfo(const std::string& message) const
+{
+  std::string msg(message);
+  if (!msg.empty()) {
+    if (msg[msg.size() - 1] != '\n') {
+      msg.push_back('\n');
+    }
+    cmSystemTools::Stdout(msg.c_str(), msg.size());
+  }
+}
+
+void cmQtAutoGenerators::LogWarning(const std::string& message) const
+{
+  std::string msg(message);
+  if (!msg.empty()) {
+    if (msg[msg.size() - 1] != '\n') {
+      msg.push_back('\n');
+    }
+    // Append empty line
+    msg.push_back('\n');
+    cmSystemTools::Stdout(msg.c_str(), msg.size());
+  }
+}
+
+void cmQtAutoGenerators::LogError(const std::string& message) const
+{
+  std::string msg(message);
+  if (!msg.empty()) {
+    if (msg[msg.size() - 1] != '\n') {
+      msg.push_back('\n');
+    }
+    // Append empty line
+    msg.push_back('\n');
+    cmSystemTools::Stderr(msg.c_str(), msg.size());
+  }
+}
+
+/**
+ * @brief Collects name collisions as output/input pairs
+ * @return True if there were collisions
+ */
+bool cmQtAutoGenerators::NameCollisionTest(
+  const std::map<std::string, std::string>& genFiles,
+  std::multimap<std::string, std::string>& collisions) const
+{
+  typedef std::map<std::string, std::string>::const_iterator Iter;
+  typedef std::map<std::string, std::string>::value_type VType;
+  for (Iter ait = genFiles.begin(); ait != genFiles.end(); ++ait) {
+    bool first_match(true);
+    for (Iter bit = (++Iter(ait)); bit != genFiles.end(); ++bit) {
+      if (ait->second == bit->second) {
+        if (first_match) {
+          if (collisions.find(ait->second) != collisions.end()) {
+            // We already know of this collision from before
+            break;
+          }
+          collisions.insert(VType(ait->second, ait->first));
+          first_match = false;
+        }
+        collisions.insert(VType(bit->second, bit->first));
+      }
+    }
+  }
+
+  return !collisions.empty();
+}
+
+/**
+ * @brief Generates a file path based on the checksum of the source file path
+ * @return The path
+ */
+std::string cmQtAutoGenerators::ChecksumedPath(
+  const std::string& sourceFile, const std::string& basePrefix,
+  const std::string& baseSuffix) const
+{
+  std::string res = FPathChecksum.getPart(sourceFile);
+  res += "/";
+  res += basePrefix;
+  res += cmsys::SystemTools::GetFilenameWithoutLastExtension(sourceFile);
+  res += baseSuffix;
+  return res;
+}
+
+/**
+ * @brief Generates the parent directory of the given file on demand
+ * @return True on success
+ */
+bool cmQtAutoGenerators::MakeParentDirectory(const char* logPrefix,
+                                             const std::string& filename) const
+{
+  bool success = true;
+  const std::string dirName = cmSystemTools::GetFilenamePath(filename);
+  if (!dirName.empty()) {
+    success = cmsys::SystemTools::MakeDirectory(dirName);
+    if (!success) {
+      std::string error = logPrefix;
+      error += ": Error: Parent directory creation failed for ";
+      error += Quoted(filename);
+      this->LogError(error);
+    }
+  }
+  return success;
+}
+
+bool cmQtAutoGenerators::FileDiffers(const std::string& filename,
+                                     const std::string& content)
+{
+  bool differs = true;
+  {
+    std::string oldContents;
+    if (ReadAll(oldContents, filename)) {
+      differs = (oldContents != content);
+    }
+  }
+  return differs;
+}
+
+bool cmQtAutoGenerators::FileWrite(const char* logPrefix,
+                                   const std::string& filename,
+                                   const std::string& content)
+{
+  std::string error;
+  // Make sure the parent directory exists
+  if (this->MakeParentDirectory(logPrefix, filename)) {
+    cmsys::ofstream outfile;
+    outfile.open(filename.c_str(), std::ios::trunc);
+    if (outfile) {
+      outfile << content;
+      // Check for write errors
+      if (!outfile.good()) {
+        error = logPrefix;
+        error += ": Error writing ";
+        error += Quoted(filename);
+      }
+    } else {
+      error = logPrefix;
+      error = ": Error opening ";
+      error += Quoted(filename);
+    }
+  }
+  if (!error.empty()) {
+    this->LogError(error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * @brief Runs a command and returns true on success
+ * @return True on success
+ */
+bool cmQtAutoGenerators::RunCommand(const std::vector<std::string>& command,
+                                    std::string& output, bool verbose) const
+{
+  // Log command
+  if (this->Verbose) {
+    this->LogInfo(QuotedCommand(command));
+  }
+  // Execute command
+  int retVal = 0;
+  bool res = cmSystemTools::RunSingleCommand(
+    command, &output, &output, &retVal, CM_NULLPTR,
+    verbose ? cmSystemTools::OUTPUT_MERGE : cmSystemTools::OUTPUT_NONE);
+  return (res && (retVal == 0));
+}
+
+/**
+ * @brief Tries to find the header file to the given file base path by
+ * appending different header extensions
+ * @return True on success
+ */
+bool cmQtAutoGenerators::FindHeader(std::string& header,
+                                    const std::string& testBasePath) const
+{
+  for (std::vector<std::string>::const_iterator ext =
+         this->HeaderExtensions.begin();
+       ext != this->HeaderExtensions.end(); ++ext) {
+    std::string testFilePath(testBasePath);
+    testFilePath += '.';
+    testFilePath += (*ext);
+    if (cmsys::SystemTools::FileExists(testFilePath.c_str())) {
+      header = testFilePath;
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string cmQtAutoGenerators::MocFindHeader(
+  const std::string& sourcePath, const std::string& includeBase) const
+{
+  std::string header;
+  // Search in vicinity of the source
+  if (!this->FindHeader(header, sourcePath + includeBase)) {
+    // Search in include directories
+    for (std::vector<std::string>::const_iterator iit =
+           this->MocIncludePaths.begin();
+         iit != this->MocIncludePaths.end(); ++iit) {
+      const std::string fullPath = ((*iit) + '/' + includeBase);
+      if (FindHeader(header, fullPath)) {
+        break;
+      }
+    }
+  }
+  // Sanitize
+  if (!header.empty()) {
+    header = cmsys::SystemTools::GetRealPath(header);
+  }
+  return header;
+}
+
+bool cmQtAutoGenerators::MocFindIncludedFile(
+  std::string& absFile, const std::string& sourcePath,
+  const std::string& includeString) const
+{
+  bool success = false;
+  // Search in vicinity of the source
+  {
+    std::string testPath = sourcePath;
+    testPath += includeString;
+    if (cmsys::SystemTools::FileExists(testPath.c_str())) {
+      absFile = cmsys::SystemTools::GetRealPath(testPath);
+      success = true;
+    }
+  }
+  // Search in include directories
+  if (!success) {
+    for (std::vector<std::string>::const_iterator iit =
+           this->MocIncludePaths.begin();
+         iit != this->MocIncludePaths.end(); ++iit) {
+      const std::string fullPath = ((*iit) + '/' + includeString);
+      if (cmsys::SystemTools::FileExists(fullPath.c_str())) {
+        absFile = cmsys::SystemTools::GetRealPath(fullPath);
+        success = true;
+        break;
+      }
+    }
+  }
+  return success;
 }
