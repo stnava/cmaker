@@ -13,13 +13,20 @@ cmake_file="cmake-3.9.3-${bit64_app}.zip"
 
 str="download.file('https://cmake.org/files/v3.9/"${cmake_file}
 str=${str}"', destfile='"${cmake_file}"')"
-Rscript -e "${str}"
+"${R_HOME}/bin/Rscript.exe" -e "${str}"
 
-str="path=gsub('[.]zip$', '', '${cmake_file}'); "
+# dir.create(${R_PACKAGE_DIR}, "cmake", "bin")
+# str="path=gsub('[.]zip$', '', '${cmake_file}'); "
+# str=${str}"utils::unzip('"${cmake_file}
+# str=${str}"', exdir = tempdir(),"
+# str=${str}"files= file.path(path, 'bin', 'cmake.exe'));"
+# str=${str}"file.copy(file.path(tempdir(), path, 'bin', "
+# str=${str}'"cmake.exe"), to=file.path("'"${R_PACKAGE_DIR}"'", "cmake", "bin"));'
+
+str="path=gsub('[.]zip$', '', '"${cmake_file}"'); "
 str=${str}"utils::unzip('"${cmake_file}
 str=${str}"', exdir = tempdir(),"
 str=${str}"files= file.path(path, 'bin', 'cmake.exe'));"
 str=${str}"file.copy(file.path(tempdir(), path, 'bin', "
 str=${str}"'cmake.exe'), to=file.path('inst', 'cmake', 'bin'));"
-
-
+"${R_HOME}/bin/Rscript.exe" -e "${str}"
