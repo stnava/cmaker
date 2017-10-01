@@ -1,3 +1,4 @@
+src/cmake/*
 src/cmake/Auxiliary/CMakeFiles/
 src/cmake/Auxiliary/CTestTestfile.cmake
 src/cmake/Auxiliary/Makefile

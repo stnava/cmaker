@@ -1,8 +1,3 @@
-CXX_STD = CXX11
-.PHONY: all libs
+.PHONY: all
 
-all: $(SHLIB)
-
-$(SHLIB): libs
-
-libs: ; cd cmake && $(MAKE) -j 2 && $(MAKE) install &&  cd ../ && rm -rf cmake
+all: 
