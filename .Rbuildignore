@@ -10,3 +10,4 @@ src/cmake/Utilities/cmzlib/.NoDartCoverage
 ^\.travis\.yml$
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^cran-comments\.md$
