@@ -29,7 +29,7 @@ str=${str}"utils::unzip('"${cmake_file}
 # str=${str}"', exdir = tempdir(),"
 str=${str}"', exdir = pack_dir);"
 str=${str}"file.rename(file.path(pack_dir, path),"
-str=${str}"file.path(pack_dir, 'cmake');"
+str=${str}"file.path(pack_dir, 'cmake'));"
 # str=${str}"files= file.path(path, 'bin', 'cmake.exe'));"
 # str=${str}"file.copy(file.path(tempdir(), path, 'bin', "
 # str=${str}"'cmake.exe'), to=file.path('"
