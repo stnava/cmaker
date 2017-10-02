@@ -16,9 +16,9 @@ str=${str}"', destfile='"${cmake_file}"')"
 "${R_HOME}/bin/Rscript.exe" -e "${str}"
 
 echo "${R_PACKAGE_DIR}"
-str='dir.create("'
+str="dir.create('"
 str=${str}"${R_PACKAGE_DIR}"
-str=${str}'", "cmake", "bin");'
+str=${str}"', 'cmake', 'bin');"
 echo "${str}"
 "${R_HOME}/bin/Rscript.exe" -e "${str}"
 
@@ -27,9 +27,9 @@ str=${str}"utils::unzip('"${cmake_file}
 str=${str}"', exdir = tempdir(),"
 str=${str}"files= file.path(path, 'bin', 'cmake.exe'));"
 str=${str}"file.copy(file.path(tempdir(), path, 'bin', "
-str=${str}'"cmake.exe"), to=file.path("'
+str=${str}"'cmake.exe'), to=file.path('"
 str=${str}"${R_PACKAGE_DIR}"
-str=${str}'", "cmake", "bin"));'
+str=${str}"', 'cmake', 'bin'));"
 echo "${str}"
 "${R_HOME}/bin/Rscript.exe" -e "${str}"
 
