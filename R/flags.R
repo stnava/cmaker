@@ -9,12 +9,27 @@
 #'
 #' @export cmake
 cmake <- function() {
-  CMAKElocation<-paste( system.file("cmake",
-    package="cmaker"),"/bin/cmake", sep="")
-  if ( ! file.exists(CMAKElocation) )
-    print("cmake does not exist")
-  cat( CMAKElocation )
+  os_type = .Platform$OS.type
+  suff = switch(os_type,
+                unix = "",
+                windows = ".exe")
+  CMAKElocation = system.file(
+    "cmake", "bin", paste0("cmake", suff),
+    package = "cmaker")
+  if (!file.exists(CMAKElocation)) {
+    message("cmake does not exist")
+  }
+  cat(CMAKElocation)
   return(CMAKElocation)
+}
+
+
+#' @rdname cmake
+#' @export
+cmake_path = function() {
+  system.file(
+    "cmake", "bin",
+    package = "cmaker")
 }
 
 #' return cmake version information
@@ -29,7 +44,7 @@ cmake <- function() {
 #' @export cmakeVersion
 cmakeVersion <- function() {
   # should update this as versions change
-  "3.2.2"
+  "3.9.3"
 }
 
 #' return cmake commit information
@@ -47,5 +62,5 @@ cmakeVersion <- function() {
 #' @export cmakeCommit
 cmakeCommit <- function() {
   # should update this as versions change
-  "c95e523db87cd503c97ca2a6021614393bb33e0b"
+  "7486607c874de3e44d33f152775fd073de2ba2c0"
 }

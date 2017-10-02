@@ -1,3 +1,4 @@
+src/cmake/*
 src/cmake/Auxiliary/CMakeFiles/
 src/cmake/Auxiliary/CTestTestfile.cmake
 src/cmake/Auxiliary/Makefile
@@ -268,3 +269,4 @@ src/cmake/cmake_uninstall.cmake
 src/cmake/install_manifest.txt
 src/cmaker.so
 src/dummy.o
+.Rproj.user

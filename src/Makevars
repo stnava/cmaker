@@ -5,4 +5,4 @@ all: $(SHLIB)
 
 $(SHLIB): libs
 
-libs: ; cd ${PWD}/cmake && $(MAKE) -j 2 && $(MAKE) install &&  rm -r -f ${PWD}/cmake
+libs: ; cd cmake && $(MAKE) -j 2 && $(MAKE) install &&  cd ../ && rm -rf cmake

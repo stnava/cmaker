@@ -6,3 +6,8 @@ src/dummy.o
 src/cmake/Utilities/.NoDartCoverage
 src/cmake/Utilities/cmexpat/.NoDartCoverage
 src/cmake/Utilities/cmzlib/.NoDartCoverage
+^appveyor\.yml$
+^\.travis\.yml$
+^.*\.Rproj$
+^\.Rproj\.user$
+^cran-comments\.md$
