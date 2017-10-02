@@ -16,9 +16,9 @@ str=${str}"', destfile='"${cmake_file}"')"
 "${R_HOME}/bin/Rscript.exe" -e "${str}"
 
 echo "${R_PACKAGE_DIR}"
-str="dir.create('"
+str="dir.create(file.path('"
 str=${str}"${R_PACKAGE_DIR}"
-str=${str}"', 'cmake', 'bin');"
+str=${str}"', 'cmake', 'bin'));"
 echo "${str}"
 "${R_HOME}/bin/Rscript.exe" -e "${str}"
 
