@@ -9,9 +9,9 @@ then
 else 
 	bit64_app=win64-x64 ;
 fi
-cmake_file="cmake-3.9.3-${bit64_app}.zip"
+cmake_file="cmake-3.11.4-${bit64_app}.zip"
 
-str="download.file('https://cmake.org/files/v3.9/"${cmake_file}
+str="download.file('https://cmake.org/files/v3.11/"${cmake_file}
 str=${str}"', destfile='"${cmake_file}"')"
 "${R_HOME}/bin/Rscript.exe" -e "${str}"
 
