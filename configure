@@ -28,6 +28,8 @@ cp -f src/cmake/Utilities/cmexpat/NoDartCoverage src/cmake/Utilities/cmexpat/.No
 cp -f src/cmake/Utilities/cmzlib/NoDartCoverage src/cmake/Utilities/cmzlib/.NoDartCoverage
 cd ./src/cmake
 mkdir -p "${R_PACKAGE_DIR}/cmake/"
+echo $CC
+echo $CXX
 ./bootstrap --parallel=$JTHREADS --prefix="${R_PACKAGE_DIR}/cmake/"
 
 cd ../
