@@ -270,3 +270,4 @@ src/cmake/install_manifest.txt
 src/cmaker.so
 src/dummy.o
 .Rproj.user
+.Rhistory
