@@ -1,8 +1,11 @@
 # DO NOT CHANGE the "init" and "install" sections below
 
+build: off
+
 # Download script file from GitHub
 init:
-  ps: |
+  - rm -f *.Rproj  
+  - ps: |
         $ErrorActionPreference = "Stop"
         Invoke-WebRequest http://raw.github.com/krlmlr/r-appveyor/master/scripts/appveyor-tool.ps1 -OutFile "..\appveyor-tool.ps1"
         Import-Module '..\appveyor-tool.ps1'
@@ -17,48 +20,45 @@ cache:
 
 environment:
   global:
+    USE_RTOOLS: true    
     R_CHECK_INSTALL_ARGS: "--install-args=--build --no-multiarch"
     WARNINGS_ARE_ERRORS: 1
+    CRAN: http://cran.rstudio.com
+  matrix:
+    - R_VERSION: devel
+      R_VER: 3.6
 
-test_script:
+    - R_VERSION: release
+      R_VER: 3.5
+
+    - R_VERSION: oldrel
+      R_VER: 3.4
+
+build_script:
+  - mkdir -p C:\rtm
+  - set TMP=C:/rtm
+  - set TEMP=C:/rtm
+  - set TMPDIR=C:/rtm
   # need to move to higher dir because CMake path req
-  - mkdir C:\run
-  - cp -avr * C:\run
-  - cp .Rbuildignore C:\run
+  - if not exist "C:\run" mkdir C:\run
+  - cp -avr . C:\run
   # need the tool a level above
   - cp ../travis-tool.sh C:\
   - cd C:\run
-  # setting PATH to be specific - no MinGW overall - just R's
-  - set PATH=C:\Rtools\bin;C:\Rtools\MinGW\bin;
-  - set PATH=%PATH%;C:\Rtools\mingw_64\bin;
-  - set PATH=%PATH%;C:\Program Files\Git\cmd;
-  # - set PATH=%PATH%;"C:\Program Files (x86)\CMake\bin";
-  - set PATH=%PATH%;C:\R\bin\i386;  
-  - set PATH=%PATH%;C:\Program Files\Git\usr\bin  
-  - set PATH=%PATH%;C:\Users\appveyor\AppData\Roaming\npm
-  - set PATH=%PATH%;C:\Users\appveyor\AppData\Local\Yarn\bin
-  - set PATH=%PATH%;C:\Program Files\AppVeyor\BuildAgent\
-  - set PATH=%PATH%;C:\Windows\system32
-  - set PATH=%PATH%;C:\Windows
-  - set PATH=%PATH%;C:\Windows\System32\Wbem
-  - set PATH=%PATH%;C:\Windows\System32\WindowsPowerShell\v1.0\
-  - set PATH=%PATH%;C:\Program Files\7-Zip
-  # - ps: >-
-  #   If ($env:APPVEYOR_REPO_TAG -Match "true") {
-  #     $env:R_CHECK_INSTALL_ARGS="--install-args=--build --no-multiarch"
-  #   } Else {
-  #     $env:R_CHECK_INSTALL_ARGS=""
-  #   }  
+  - RScript -e "install.packages('Rcpp', type = 'source', repos=c(CRAN='https://cran.rstudio.com'))"  
+  - travis-tool.sh install_deps
+
+test_script:  
   - travis-tool.sh run_tests
   - ls
-  # - cp ../*.zip ./
-  - cp -r C:/run/* %APPVEYOR_BUILD_FOLDER%
-  - cp C:/run/.Rbuildignore %APPVEYOR_BUILD_FOLDER%
+  - cp -ravTf C:/run %APPVEYOR_BUILD_FOLDER%
   - cd %APPVEYOR_BUILD_FOLDER%
   - ls
-
-build_script:
-  - travis-tool.sh install_deps
+  - for %%i in (*.zip) do echo %%~ni> zip_filename.txt
+  - SET /P PKG_TARBALL=<zip_filename.txt
+  - del zip_filename.txt
+  - rename %PKG_TARBALL%.zip %PKG_TARBALL%_R%R_VER%.zip
+  - echo Built tarball is %PKG_TARBALL%_R%R_VER%.zip  
 
 on_failure:
   - cat *.Rcheck/00install.out  
@@ -74,3 +74,15 @@ artifacts:
 
   - path: '*.Rcheck\**\*.out'
     name: Logs
+
+
+deploy:
+  provider: GitHub
+  description: 'Windows Binary'
+  auth_token:
+    secure: tc2Va9OWLH9H/uKPUKCUmv+q+wQpzRVJd6t8ckXjqzGnOo9eWyiQCmuuUjcuM3b8
+  draft: false
+  prerelease: false
+  on:
+    appveyor_repo_tag: true
+  #tag: $(appveyor_repo_tag_name)
