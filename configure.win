@@ -2,15 +2,15 @@
 CXX_STD=CXX11
 
 bit64=`${R_HOME}/bin/Rscript.exe -e "x=grepl('64', Sys.info()[['machine']])*1;cat(x)"`
-if [ $bit64 -eq 0 ]; 
+if [ $bit64 -eq 0 ];
 then
 	bit64_app=win32-x86 ;
-else 
+else
 	bit64_app=win64-x64 ;
 fi
-cmake_file="cmake-3.11.4-${bit64_app}.zip"
+cmake_file="cmake-3.16.3-${bit64_app}.zip"
 
-str="download.file('https://cmake.org/files/v3.11/"${cmake_file}
+str="download.file('https://cmake.org/files/v3.16/"${cmake_file}
 str=${str}"', destfile='"${cmake_file}"')"
 "${R_HOME}/bin/Rscript.exe" -e "${str}"
 

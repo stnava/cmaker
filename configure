@@ -6,8 +6,8 @@ JTHREADS=2
 #####################
 # Download CMake Source
 #####################
-cmake_file="cmake-3.11.4.tar.gz"
-str="download.file('https://cmake.org/files/v3.11/"${cmake_file}
+cmake_file="cmake-3.16.3.tar.gz"
+str="download.file('https://cmake.org/files/v3.16/"${cmake_file}
 str=${str}"', destfile='"${cmake_file}"')"
 ${R_HOME}/bin/Rscript -e "${str}"
 
